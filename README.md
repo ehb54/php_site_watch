@@ -71,12 +71,17 @@ normally does as `us3`:
 sudo cp examples/us3lims.conf /etc/php-site-watch.conf
 ```
 
+That replaces the whole config, recipients included; add them back with `sudo ./setup.sh mail add`.
+
 - **alerts**, hourly at 5 past: findings from today and yesterday that haven't been reported
   before. Nothing is sent when there is nothing new. Each finding is mailed once; the list of
   what was sent is kept in `/var/lib/php-site-watch` for 14 days.
 - **status**, daily at 07:00: the full report on the previous day plus server health. The
   subject says `OK`, the number of findings, or which health check needs attention, so a
   missing report also tells you something is wrong.
+
+Scheduled runs take turns: an alert that finds the previous run still going skips that hour, and
+the run log says so; the status report waits for its turn.
 
 `--mailfrom ADDRESS` sets the sender, if your mail relay needs a particular one. Leave out
 `--cron` to install the script only. For PHP sites in containers, see [Containers](#containers).
@@ -304,6 +309,10 @@ bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 
 ## Versions
 
+- **1.7.1:** a home that is a link (`/home/us3` to `/srv/users/us3`) is scanned under its usual
+  name, so exclude patterns match; scheduled runs take turns instead of piling up; the LIMS example
+  leaves out the analysis jobs' work directories, `us3`'s shell history, and CAPTCHA backgrounds
+  in any one-level subdirectory such as `bak/`
 - **1.7.0:** the changed-file scan takes its directories from the web server and PHP configuration
   instead of walking all of `/srv`; the health section shows where it looked and how long it took
 - **1.6.0:** Debian and Ubuntu: PHP2Shell fix check through dpkg; in containers: the disk line

@@ -43,7 +43,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.7.0';
+our $VERSION = '1.7.1';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -137,6 +137,18 @@ if ($cli{last}) { show_last(); exit 0 }
 usage(2, '--alert and --status cannot be combined') if $cli{alert} && $cli{status};
 $mode     = $cli{alert} ? 'alert' : $cli{status} ? 'status' : 'report';
 my $quiet = $cli{quiet} ? 1 : 0;
+
+# Scheduled runs take turns. An hourly alert that finds the previous run still going skips this
+# hour instead of piling up behind it on a slow disk; the daily status waits for its turn.
+my $lock;
+if ($mode ne 'report') {
+    mkdir $state_dir, 0700 unless -d $state_dir;
+    open $lock, '>>', "$state_dir/lock" or fail("cannot open $state_dir/lock: $!");
+    unless (flock $lock, $mode eq 'alert' ? 6 : 2) {    # LOCK_EX|LOCK_NB, or LOCK_EX
+        run_log('skipped: the previous run is still going');
+        exit 0;
+    }
+}
 
 my $today     = local_ymd(time);
 my $yesterday = local_ymd(time - 86400);
@@ -501,7 +513,7 @@ sub health {
     push @lines, scalar(keys %containers) . ' containers running; their processes are left out of this report' if %containers;
     push @lines, "$user has $zombies zombie (defunct) processes; their parent is not collecting them" if $zombies;
     if (defined $scan_secs) {
-        push @lines, "changed files looked for in: " . join(', ', @scan) . " ($scan_secs s)";
+        push @lines, 'changed files looked for in: ' . join(', ', map { m{^(.+?)/+$} ? $1 : $_ } @scan) . " ($scan_secs s)";
         push @problems, sprintf('the changed-file scan took %d min; list fewer scan directories', $scan_secs / 60) if $scan_secs >= 900;
     }
 
@@ -601,17 +613,23 @@ sub default_scan {
         }
         close $fh;
     }
-    my (%seen, @roots);
+    # Compare the real paths, but scan each directory by the name it was first given, so that the
+    # files found read as usual (/home/us3/... when that is a link to /srv/users/us3) and exclude
+    # patterns match them. A trailing slash makes find follow a link it starts from.
+    my (%name, @roots);
     for my $d (@dirs) {
         $d =~ s/\s+$//;
+        $d =~ s{(?<=.)/+$}{};
         next if $d !~ m{^/} || $d =~ /[\$%{]/ || !-d $d;    # relative, or a variable we can't expand
         my $r = cmd_out('readlink', '-f', $d);
-        push @roots, $r if defined $r && $r ne '/' && !$seen{$r}++;
+        next if !defined $r || $r eq '/' || exists $name{$r};
+        $name{$r} = -l $d ? "$d/" : $d;
+        push @roots, $r;
     }
     # a directory inside another one is walked with it, unless it is on another filesystem (find -xdev)
     my %dev  = map { $_ => (stat $_)[0] } @roots;
     my @keep = grep { my $d = $_; !grep { $_ ne $d && index($d, "$_/") == 0 && $dev{$_} == $dev{$d} } @roots } @roots;
-    return sort @keep;
+    return sort map { $name{$_} } @keep;
 }
 
 # The lines of a web server configuration file and of the files it includes, comments left out.
