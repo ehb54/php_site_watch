@@ -4,3 +4,6 @@
 [Thu Oct 22 00:17:00.000001 2026] [php:error] [pid 4568:tid 4568] [client 1.2.3.4:6] PHP Fatal error:  Maximum execution time of 30 seconds exceeded in /srv/www/htdocs/a.php on line 7
 [Wed Oct 21 23:00:00.111111 2026] [proxy_fcgi:error] [pid 1:tid 2] [client 8.8.8.8:5] AH01067: Failed to read FastCGI header
 [Thu Oct 22 00:18:00 2025] [proxy_fcgi:error] [pid 1:tid 2] [client 8.8.4.4:5] AH01067: same day last year, must be ignored
+[Thu Oct 22 00:19:00.000001 2026] [proxy_fcgi:error] [pid 7050:tid 7154] [client 5.5.5.5:1] AH01071: Got error 'PHP message: PHP Notice:  file_get_contents(): Content-type not specified assuming application/x-www-form-urlencoded in /srv/www/htdocs/a/form.php on line 55', referer: https://example.org/contact.php
+[Thu Oct 22 00:19:30.000001 2026] [proxy_fcgi:error] [pid 7049:tid 7146] [client 5.5.5.6:2] AH01071: Got error 'PHP message: PHP Fatal error:  Uncaught Error: Undefined constant "d" in /srv/www/htdocs/somo/pubs.php:79\nStack trace:\n#0 {main}\n  thrown in /srv/www/htdocs/somo/pubs.php on line 79'
+[Thu Oct 22 00:19:31.000001 2026] [proxy_fcgi:error] [pid 7049:tid 7146] [client 5.5.5.7:3] AH01071: Got error 'PHP message: PHP Fatal error:  Uncaught Error: Undefined constant "d" in /srv/www/htdocs/somo/pubs.php:79\nStack trace:\n#0 {main}\n  thrown in /srv/www/htdocs/somo/pubs.php on line 79', referer: https://example.org/somo/

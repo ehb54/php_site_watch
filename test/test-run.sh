@@ -54,6 +54,8 @@ check 'noise, other days and old rotated files left out' '! grep -qE "SIGTERM|AH
 check '5xx and POST counts, including the rotated .gz log' 'grep -qE "^ +2  1\.2\.3\.4 POST / 503$" /tmp/r1.txt && grep -q "9.8.7.6 POST /upload.php 502" /tmp/r1.txt && grep -qE "^ +2  9\.8\.7\.6$" /tmp/r1.txt'
 check 'planted files found, expected ones left out' 'grep -q shell.php /tmp/r1.txt && grep -q /tmp/x.bin /tmp/r1.txt && ! grep -qE "trac\.log|uslims_backup_stats|sess_abc123|old\.php" /tmp/r1.txt'
 check 'planted processes found, PHP worker allowed' 'grep -q "ncat -lk 0.0.0.0 4444" /tmp/r1.txt && ! grep -q "php-fpm: pool www" /tmp/r1.txt'
+check 'PHP notices and warnings are not FastCGI failures' '! grep -qE "Content-type not specified|Undefined variable" /tmp/r1.txt'
+check 'application fatal errors grouped for context' 'grep -qE "^ +2  Uncaught Error: Undefined constant \"d\" in /srv/www/htdocs/somo/pubs.php:79$" /tmp/r1.txt'
 check 'listener and outbound connection found, loopback left out' 'grep -q "LISTEN  0.0.0.0:4444" /tmp/r1.txt && grep -q -- "-> $ip:8099" /tmp/r1.txt && ! grep -q -- "-> 127.0.0.1:8099" /tmp/r1.txt'
 check 'health section present' 'grep -q "== Server health (now)" /tmp/r1.txt'
 
@@ -78,7 +80,7 @@ check 'status mail headers' 'grep -q "^ARGS: -oi -t -f watch@example.org$" /tmp/
 check 'status mail has the full report and health' 'grep -q "== Server health (now)" /tmp/mail/1.txt && grep -q "== Most active POST senders" /tmp/mail/1.txt'
 perl /s/php-site-watch.pl --alert --mail-to ops@example.org "${mailopts[@]}"
 check 'first alert mailed, covering yesterday too' 'grep -qE "^Subject: \[php-site-watch\] ALERT \S+: [0-9]+ new findings$" /tmp/mail/2.txt && grep -q "child 400 exited on signal 11" /tmp/mail/2.txt && grep -q shell.php /tmp/mail/2.txt'
-check 'alert leaves out context and health' '! grep -qE "== (5xx|Most active|Server health)" /tmp/mail/2.txt'
+check 'alert leaves out context and health' '! grep -qE "== (5xx|Most active|Server health)" /tmp/mail/2.txt && ! grep -q "Uncaught Error" /tmp/mail/2.txt'
 perl /s/php-site-watch.pl --alert --mail-to ops@example.org "${mailopts[@]}"
 check 'second alert sends nothing' '[[ ! -e /tmp/mail/3.txt ]]'
 runas touch /srv/www/htdocs/another.php

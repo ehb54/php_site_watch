@@ -15,9 +15,11 @@ It reports:
 - PHP workers that crashed (`SIGSEGV`, `SIGBUS`, `SIGABRT`) or died while starting a request,
   from php-fpm logs and from Apache when it runs PHP itself (mod_php)
 - PHP running out of memory or time, and php-fpm reaching its worker limit
-- FastCGI errors between the web server and PHP (the "Primary script unknown" noise from
-  scanners is left out)
-- 5xx responses, and the clients sending the most POST requests
+- FastCGI failures between the web server and PHP, such as reset connections or unreadable
+  headers (PHP's own notices and warnings, which Apache logs as `AH01071`, and the "Primary
+  script unknown" noise from scanners are left out)
+- for context: PHP fatal errors in your applications, grouped by message; 5xx responses; and
+  the clients sending the most POST requests
 - files the PHP account changed recently, such as a dropped web shell
 - processes the PHP account is running other than web server and PHP workers
 - network sockets of the PHP account other than web visitors and local connections, such as a
@@ -107,7 +109,7 @@ Options (all but `--quiet`, `--alert`, `--status` and `--version` can also be se
 | `--mail-from ADDRESS` | sender address for mail |
 | `--version` | print the version |
 
-The 5xx, POST and health sections are for context and don't count as findings. The files,
+The PHP fatal error, 5xx, POST and health sections are for context and don't count as findings. The files,
 processes, sockets and health sections show the current state, whatever `--date` is.
 
 ## Reading the results

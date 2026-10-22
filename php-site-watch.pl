@@ -35,7 +35,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.1.0';
+our $VERSION = '1.2.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -51,6 +51,8 @@ my %mon = map { $mon[$_] => $_ + 1 } 0 .. 11;
 my $re_crash  = qr/exited on signal (?:6|7|11)\b|SIG(?:SEGV|BUS|ABRT)|exited with code [1-9]|exit signal (?:Segmentation fault|Bus error|Aborted)/;
 my $re_limits = qr/Allowed memory size|Maximum execution time|Out of memory|reached (?:pm\.)?max_children/;
 my $re_fcgi   = qr/proxy_fcgi:error|proxy:error|AH01067|AH01075|reset by peer|upstream prematurely closed|while reading response header from upstream/;
+my $re_stderr = qr/AH01071|FastCGI sent in stderr/;    # PHP's own messages passed on by Apache or nginx, not failures
+my $re_fatal  = qr/PHP Fatal error:\s+(.*?)(?:\\n|',\s*referer:|"\s*while reading|'?\s*$)/;
 my $re_loop   = qr/^(?:127\.|::1$|::ffff:127\.|localhost$)/;
 
 my @default_exclude    = (qr{^/var/lib/php/(?:session|opcache)/}, qr{/sess_[\w,-]+$});
@@ -161,7 +163,7 @@ my %seen_file;
 my @logs = grep { !$seen_file{$_}++ } (log_files(\@fpm_paths, qr/\.log/), log_files(\@web_paths, qr/access|error/));
 my ($first_day) = sort @days;
 my $oldest = (days_from_civil(split /-/, $first_day) - 2) * 86400;    # older files can't hold these days
-my (%hits, %e5, %posts, $read);
+my (%hits, %e5, %posts, %fatal, $read);
 $hits{$_} = [] for qw(crash limits fcgi);
 
 for my $f (@logs) {
@@ -179,9 +181,10 @@ for my $f (@logs) {
             $e5{"$ip $method $url $status"}++ if $status =~ /^5/;
             next;
         }
-        if    ($l =~ $re_crash)                                  { push @{ $hits{crash} },  $l }
-        elsif ($l =~ $re_limits)                                 { push @{ $hits{limits} }, $l }
-        elsif ($l =~ $re_fcgi && $l !~ /Primary script unknown/) { push @{ $hits{fcgi} },   $l }
+        if    ($l =~ $re_crash)                         { push @{ $hits{crash} },  $l }
+        elsif ($l =~ $re_limits)                        { push @{ $hits{limits} }, $l }
+        elsif ($l =~ $re_fatal)                         { $fatal{$1}++ }
+        elsif ($l =~ $re_fcgi && $l !~ $re_stderr)      { push @{ $hits{fcgi} },   $l }
     }
     close $fh;
 }
@@ -254,8 +257,9 @@ my $day_label = join ' and ', @days;
 my @sections = (
     { title => 'PHP workers that crashed or died while starting a request', alert => 1, tail => 20, lines => $hits{crash} },
     { title => 'PHP out of memory or time, or worker limit reached', alert => 1, tail => 20, lines => $hits{limits} },
-    { title => "FastCGI errors between web server and PHP ('Primary script unknown' scanner noise left out)",
+    { title => "FastCGI failures between web server and PHP (PHP's own notices, warnings and scanner noise left out)",
       alert => 1, tail => 20, lines => $hits{fcgi} },
+    { title => 'PHP fatal errors in applications, for context: count, error', alert => 0, lines => [ counted(\%fatal, 10) ] },
     { title => '5xx responses: count, client, method, URL, status', alert => 0, lines => [ counted(\%e5, 15) ] },
     { title => 'Most active POST senders', alert => 0, lines => [ counted(\%posts, 5) ] },
     { title => "Files $user changed in the last $hours h", alert => 1, head => 30, lines => \@changed },
@@ -385,7 +389,7 @@ sub health {
     }
 
     my @use;
-    for (cmd_lines('df', '-lP', '-x', 'tmpfs', '-x', 'devtmpfs', '-x', 'squashfs', '-x', 'overlay')) {
+    for (cmd_lines('df', '-lP', map { ('-x', $_) } qw(tmpfs devtmpfs squashfs overlay efivarfs))) {
         my @f = split ' ';
         next unless @f >= 6 && $f[4] =~ /^(\d+)%$/;
         my ($pct, $mount) = ($1, join(' ', @f[5 .. $#f]));
