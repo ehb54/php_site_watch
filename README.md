@@ -155,7 +155,7 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 | `--fpm-logs PATH` | php-fpm log directory or file (repeatable) |
 | `--web-logs PATH` | Apache or nginx log directory or file (repeatable) |
 | `--scan DIR` | where to look for changed files (repeatable; replaces the default directories below) |
-| `--exclude REGEX` | changed files to ignore (repeatable) |
+| `--exclude REGEX` | changed files to ignore (repeatable); one naming a whole directory, like `^/srv/app/cache/`, also skips that directory during the scan |
 | `--allow-proc REGEX` | other expected processes of the PHP account (repeatable) |
 | `--allow-peer REGEX` | expected connections to other machines, as host:port (repeatable) |
 | `--config FILE` | config file (default: `/etc/php-site-watch.conf` if it exists) |
@@ -310,8 +310,9 @@ bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 ## Versions
 
 - **1.7.1:** a home that is a link (`/home/us3` to `/srv/users/us3`) is scanned under its usual
-  name, so exclude patterns match; scheduled runs take turns instead of piling up; the LIMS example
-  leaves out the analysis jobs' work directories, `us3`'s shell history, and CAPTCHA backgrounds
+  name, so exclude patterns match; scheduled runs take turns instead of piling up; an exclude
+  naming a whole directory (`^/dir/`) also skips it during the scan; the LIMS example leaves out
+  the analysis jobs' work and result directories, `us3`'s shell history, and CAPTCHA backgrounds
   in any one-level subdirectory such as `bak/`
 - **1.7.0:** the changed-file scan takes its directories from the web server and PHP configuration
   instead of walking all of `/srv`; the health section shows where it looked and how long it took

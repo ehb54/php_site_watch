@@ -20,7 +20,8 @@
 #   --scan DIR           where to look for files changed by the PHP account (repeatable; default:
 #                        what the web server serves, the directories PHP is set to use, the
 #                        account's home and the temporary directories)
-#   --exclude REGEX      changed files to ignore (repeatable)
+#   --exclude REGEX      changed files to ignore (repeatable); one naming a whole directory,
+#                        like ^/srv/app/cache/, also skips that directory during the scan
 #   --allow-proc REGEX   other expected processes of the PHP account (repeatable)
 #   --allow-peer REGEX   expected network peers as host:port, e.g. a remote database (repeatable)
 #   --config FILE        read options from FILE, one "key = value" per line, # for comments
@@ -183,6 +184,9 @@ my ($uid, $home) = (getpwnam $user)[2, 7];
 fail("unknown user '$user'") unless defined $uid;
 
 my @exclude    = (@default_exclude,    map { qr/$_/ } @{ $list{exclude} });
+# An exclude that names a whole directory, like ^/home/us3/lims/work/, is also skipped during the
+# scan, so a big directory of expected files costs nothing.
+my @skip       = map { m{^\^((?:/(?:[\w-]|\\\.)+)+)/$} ? do { (my $d = $1) =~ s/\\\././g; $d } : () } @{ $list{exclude} };
 my @allow_proc = (@default_allow_proc, map { qr/$_/ } @{ $list{'allow-proc'} });
 my @allow_peer = map { qr/$_/ } @{ $list{'allow-peer'} };
 
@@ -231,7 +235,8 @@ push @warn, 'no log files found for ' . join(' or ', @days) unless $read;
 my (@changed, $scan_secs);
 if (@scan) {
     my $start = time;
-    my $fh = quiet_open('find', @scan, '-xdev', '-type', 'f', '-user', $user, '-mmin', '-' . int($hours * 60), '-print0');
+    my @prune = @skip ? ('(', (map { ('-path', $_, '-o') } @skip[0 .. $#skip - 1]), '-path', $skip[-1], ')', '-prune', '-o') : ();
+    my $fh = quiet_open('find', @scan, '-xdev', @prune, '-type', 'f', '-user', $user, '-mmin', '-' . int($hours * 60), '-print0');
     if ($fh) {
         local $/ = "\0";
         while (my $f = <$fh>) {
@@ -513,7 +518,8 @@ sub health {
     push @lines, scalar(keys %containers) . ' containers running; their processes are left out of this report' if %containers;
     push @lines, "$user has $zombies zombie (defunct) processes; their parent is not collecting them" if $zombies;
     if (defined $scan_secs) {
-        push @lines, 'changed files looked for in: ' . join(', ', map { m{^(.+?)/+$} ? $1 : $_ } @scan) . " ($scan_secs s)";
+        push @lines, 'changed files looked for in: ' . join(', ', map { m{^(.+?)/+$} ? $1 : $_ } @scan)
+                   . (@skip ? '; skipped: ' . join(', ', @skip) : '') . " ($scan_secs s)";
         push @problems, sprintf('the changed-file scan took %d min; list fewer scan directories', $scan_secs / 60) if $scan_secs >= 900;
     }
 

@@ -18,7 +18,8 @@
 # and /var/www. scan lines replace that list.
 # scan = /home/web/public_html
 
-# Changed files that are expected here, as Perl regular expressions.
+# Changed files that are expected here, as Perl regular expressions. One that names a whole
+# directory (^/dir/, with dots written \.) is also skipped during the scan.
 # exclude = ^/srv/trac/[^/]+/(log|db)/
 # exclude = /cache/
 
