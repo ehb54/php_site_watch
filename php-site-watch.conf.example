@@ -27,7 +27,7 @@
 # Expected connections to other machines, as host:port (for example a database server).
 # allow-peer = ^10\.0\.0\.5:3306$
 
-# Where --alert and --status mail goes (comma-separated), and the sender address if your relay
-# needs one. setup.sh install --cron puts these on the cron jobs' command lines instead.
+# Where --alert and --status mail goes (one address per line, or comma-separated), and the sender
+# address if your relay needs one. "setup.sh mail add/remove/from" maintains these lines.
 # mail-to = you@example.org
 # mail-from = php-site-watch@example.org

@@ -86,6 +86,13 @@ check 'second alert sends nothing' '[[ ! -e /tmp/mail/3.txt ]]'
 runas touch /srv/www/htdocs/another.php
 perl /s/php-site-watch.pl --alert --mail-to ops@example.org "${mailopts[@]}"
 check 'third alert has only the new file' 'grep -q "^Subject: .*ALERT .*: 1 new finding$" /tmp/mail/3.txt && grep -q another.php /tmp/mail/3.txt && ! grep -q shell.php /tmp/mail/3.txt'
+cp /t/test.conf /tmp/mail.conf
+printf 'mail-to = cfg1@example.org\nmail-to = cfg2@example.org, cfg3@example.org\n' >> /tmp/mail.conf
+cfgopts=("${logs[@]}" --sendmail /tmp/fake-sendmail --state-dir /tmp/state)
+perl /s/php-site-watch.pl --status --config /tmp/mail.conf "${cfgopts[@]}"
+check 'recipients come from the config' 'grep -q "^To: cfg1@example.org, cfg2@example.org, cfg3@example.org$" /tmp/mail/4.txt'
+perl /s/php-site-watch.pl --status --config /tmp/mail.conf --mail-to only@example.org "${cfgopts[@]}"
+check '--mail-to replaces the config recipients' 'grep -q "^To: only@example.org$" /tmp/mail/5.txt'
 perl /s/php-site-watch.pl --alert --mail-to 'x@y; rm -rf /' "${mailopts[@]}" 2> /dev/null; rc=$?
 check 'malformed --mail-to rejected' '((rc == 2))'
 perl /s/php-site-watch.pl --alert --date "$today" "${mailopts[@]}" 2> /dev/null; rc=$?

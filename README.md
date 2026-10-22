@@ -52,9 +52,11 @@ cd php_site_watch
 sudo ./setup.sh install --cron --mailto you@example.org
 ```
 
-This installs `/usr/local/sbin/php-site-watch` (use the full path with `sudo`: on RHEL and similar systems its safe PATH leaves out `/usr/local/sbin`), a fully commented `/etc/php-site-watch.conf` (only
-if there isn't one yet), and `/etc/cron.d/php-site-watch` with two jobs that mail to the given
-addresses (comma-separated; root if `--mailto` is left out):
+This installs `/usr/local/sbin/php-site-watch` (use the full path with `sudo`: on RHEL and
+similar systems its safe PATH leaves out `/usr/local/sbin`), a fully commented
+`/etc/php-site-watch.conf` (only if there isn't one yet), and `/etc/cron.d/php-site-watch` with
+two jobs that mail to the recipients in the config. `--mailto` adds recipients there
+(comma-separated); with none, cron mails the reports to root instead.
 
 - **alerts**, hourly at 5 past: findings from today and yesterday that haven't been reported
   before. Nothing is sent when there is nothing new. Each finding is mailed once; the list of
@@ -64,11 +66,21 @@ addresses (comma-separated; root if `--mailto` is left out):
   missing report also tells you something is wrong.
 
 `--mailfrom ADDRESS` sets the sender, if your mail relay needs a particular one. Leave out
-`--cron` to install the script only. To check that mail gets through:
+`--cron` to install the script only.
+
+Who gets the reports:
 
 ```bash
-sudo /usr/local/sbin/php-site-watch --status --mail-to you@example.org
+./setup.sh mail list                            # current recipients
+sudo ./setup.sh mail add colleague@example.org  # one or more addresses
+sudo ./setup.sh mail remove colleague@example.org
+sudo ./setup.sh mail from watch@example.org     # sender address, or none for the system's
+sudo ./setup.sh mail test                       # mail a status report to everyone now
 ```
+
+Recipients are the `mail-to` lines of `/etc/php-site-watch.conf`, so editing that file works
+too; `setup.sh` also keeps cron's address for error mail in step. Updating from a version
+before 1.4.0 moves the addresses from the cron jobs into the config.
 
 Later:
 
@@ -111,7 +123,7 @@ Options (all but `--quiet`, `--alert`, `--status` and `--version` can also be se
 | `--quiet` | print only sections with findings |
 | `--alert` | report only findings not reported before, from today and yesterday |
 | `--status` | full report plus server health |
-| `--mail-to ADDRESSES` | with `--alert` or `--status`, mail instead of printing (comma-separated) |
+| `--mail-to ADDRESSES` | with `--alert` or `--status`, mail instead of printing (comma-separated; replaces the config's recipients) |
 | `--mail-from ADDRESS` | sender address for mail |
 | `--version` | print the version |
 

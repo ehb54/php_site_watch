@@ -27,7 +27,8 @@
 #                        (for an hourly cron job)
 #   --status             full report plus server health (for a daily cron job)
 #   --mail-to ADDRESSES  with --alert or --status, mail the report instead of printing it
-#                        (comma-separated; alerts are mailed only when there is something new)
+#                        (comma-separated; replaces the mail-to lines of the config file;
+#                        alerts are mailed only when there is something new)
 #   --mail-from ADDRESS  sender address for mail (default: the system's)
 #   --version            print the version and exit
 # Exit status: 0 nothing suspicious, 1 findings, 2 usage or setup error.
@@ -35,14 +36,14 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.3.0';
+our $VERSION = '1.4.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 $ENV{LC_ALL} = 'C';
 
-my %single = map { $_ => 1 } qw(date hours user config mail-to mail-from sendmail state-dir);
-my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer);
+my %single = map { $_ => 1 } qw(date hours user config mail-from sendmail state-dir);
+my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer mail-to);
 my %flag   = map { $_ => 1 } qw(quiet alert status);
 
 my @mon = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
@@ -112,7 +113,8 @@ if (defined $config) {
     }
 }
 $opt{$_} = $cli{$_} for grep { !$flag{$_} } keys %cli;
-push @{ $list{$_} }, @{ $cli_list{$_} } for keys %multi;
+push @{ $list{$_} }, @{ $cli_list{$_} } for grep { $_ ne 'mail-to' } keys %multi;
+$list{'mail-to'} = $cli_list{'mail-to'} if @{ $cli_list{'mail-to'} };    # a test mail goes only where asked
 
 usage(2, '--alert and --status cannot be combined') if $cli{alert} && $cli{status};
 my $mode  = $cli{alert} ? 'alert' : $cli{status} ? 'status' : 'report';
@@ -130,9 +132,9 @@ my %want = map { $_ => 1 } @days;
 
 my $hours = $opt{hours} // 24;
 fail('--hours must be a number') unless $hours =~ /^\d+(?:\.\d+)?$/;
-if (defined $opt{'mail-to'}) {
-    fail('--mail-to must be a comma-separated list of addresses') unless $opt{'mail-to'} =~ /^[\w.%+@-]+(?:\s*,\s*[\w.%+@-]+)*$/;
-}
+my %seen_to;
+my @mail_to = grep { !$seen_to{ lc $_ }++ } map { split /\s*,\s*/ } @{ $list{'mail-to'} };
+for (@mail_to) { fail("not a mail address: $_") unless /^[\w.%+-]+@[\w.-]+$|^[\w.-]+$/ }    # user@host, or a local name like root
 if (defined $opt{'mail-from'}) {
     fail('--mail-from must be a single address') unless $opt{'mail-from'} =~ /^[\w.%+@-]+$/;
 }
@@ -357,15 +359,14 @@ sub counted {
 # Mail a report through sendmail, or print it when no recipients are configured.
 sub deliver {
     my ($subject, $body) = @_;
-    unless (defined $opt{'mail-to'}) {
+    unless (@mail_to) {
         print "$subject\n\n$body";
         return;
     }
     my $sendmail = $opt{sendmail} // '/usr/sbin/sendmail';
-    my @to = split /\s*,\s*/, $opt{'mail-to'};
     my @args = ('-oi', '-t', (defined $opt{'mail-from'} ? ('-f', $opt{'mail-from'}) : ()));
     open my $mh, '|-', $sendmail, @args or fail("cannot run $sendmail: $!");
-    print $mh 'To: ', join(', ', @to), "\n";
+    print $mh 'To: ', join(', ', @mail_to), "\n";
     print $mh "From: $opt{'mail-from'}\n" if defined $opt{'mail-from'};
     print $mh "Subject: $subject\n", "MIME-Version: 1.0\n", "Content-Type: text/plain; charset=UTF-8\n",
               "Content-Transfer-Encoding: 8bit\n", "Auto-Submitted: auto-generated\n\n", $body;
