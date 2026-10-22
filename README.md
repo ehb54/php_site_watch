@@ -27,8 +27,8 @@ It reports:
   listening backdoor or an outbound connection
 - server health: uptime and load, whether the web server and php-fpm services are running,
   local disks over 90% full, the PHP version and whether its packages include the PHP2Shell fix
-  (RPM, Debian and Ubuntu), whether php-fpm is still running a binary an update replaced, and
-  zombie processes of the PHP account
+  (RPM, Debian and Ubuntu), whether php-fpm, or Apache with mod_php, is still running PHP that an
+  update replaced, and zombie processes of the PHP account
 
 On a host, processes in containers (Docker, Podman, Kubernetes, LXC) are left out: they can run
 under the same user ID as the host's PHP but belong to their own setups. The health section notes
@@ -195,8 +195,8 @@ yourself with `scan` lines.
   or `/dev/shm`; processes or listening sockets of the PHP account you don't recognize; and
   connections from it to unfamiliar addresses.
 - **Health lines marked `!!`:** a web server or php-fpm service that is enabled but not running,
-  a disk over 90% full, a PHP package without the PHP2Shell fix, or a php-fpm that needs a
-  restart to pick up an update.
+  a disk over 90% full, a PHP package without the PHP2Shell fix, a php-fpm that needs a restart
+  to pick up an update, or an Apache with mod_php that needs a stop and start for it.
 
 ## The PHP2Shell fix check
 
@@ -228,6 +228,12 @@ Builds with the fix:
 | Ubuntu 22.04 | php8.1 | `8.1.2-1ubuntu2.28` (USN-8948-1) |
 | Ubuntu 24.04 | php8.3 | `8.3.6-0ubuntu0.24.04.13` (USN-8948-1) |
 | RHEL 8, Rocky, AlmaLinux, Oracle Linux 8 | php 7.4 module | `7.4.33-8` |
+
+The check reads the installed packages, but a running PHP keeps the code it started with. The
+health section flags a php-fpm that still runs a binary an update replaced, and an Apache that
+still runs a PHP module (mod_php) an update replaced. Apache keeps the old module through graceful
+restarts (`apachectl graceful`, `apachectl restart`, `service apache2 reload`), so after a PHP
+update stop and start it: `service apache2 restart` or `systemctl restart apache2` do that.
 
 ## Containers
 
@@ -262,6 +268,11 @@ a socket, so the report warns that the sockets section is incomplete. To see the
 sockets too, create the container with `--cap-add SYS_PTRACE`. Inside a container, the disk line
 shows the container's `/` as the host disk it is stored on.
 
+Updating packages inside a running container doesn't restart its services (Docker's Ubuntu images
+refuse it during installs), so after updating PHP there, stop and start Apache yourself, for
+example `docker exec web1 service apache2 restart` (or restart the container, if Apache is its
+main process); until then the health section says Apache still runs the replaced PHP module.
+
 A plain run (no `--alert` or `--status`) writes nothing, so it can also check a snapshot of a
 container, such as an image made with `docker commit`, in a throwaway container that starts none
 of its services. Nothing runs there, so name the PHP account, check one day at a time with
@@ -292,12 +303,16 @@ podman run --rm -q --cap-add SYS_PTRACE -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z"
 # real Apache + php-fpm 7.4 and postfix: crashed workers, out-of-memory, PHP2Shell fix check
 podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:8 bash /t/test-el8-live.sh
-# setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate, uninstall
+# setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate,
+# uninstall (also with Ubuntu and Debian images, e.g. docker.io/library/ubuntu:22.04)
 podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh
 # Ubuntu: the PHP2Shell fix check through dpkg with fixture packages, missing ps and ss, the disk
 # line in a container, examples/genapp.conf (:20.04, :22.04 or :24.04, or debian:12-slim; run it
 # a second time with --cap-add SYS_PTRACE for the other half of the sockets checks)
 podman run --rm -q -v "$PWD:/s:ro,z" docker.io/library/ubuntu:22.04 bash /s/test/test-ubuntu.sh
+# real Apache with mod_php on Ubuntu (:20.04, :22.04 or :24.04): crashed workers, out-of-memory,
+# the fix check on the archive's packages, and Apache still running the old PHP after an update
+podman run --rm -q -v "$PWD:/s:ro,z" docker.io/library/ubuntu:22.04 bash /s/test/test-ubuntu-live.sh
 ```
 
 `docker run` works the same way. One more test runs on a Docker host itself and follows
@@ -309,6 +324,9 @@ bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 
 ## Versions
 
+- **1.8.0:** an Apache still running a PHP module an update replaced (mod_php) is flagged, with
+  advice to stop and start it, since a graceful restart keeps the old module; `setup.sh` on
+  Debian and Ubuntu: apt package hints, and `--cron` checks that cron itself is installed
 - **1.7.1:** a home that is a link (`/home/us3` to `/srv/users/us3`) is scanned under its usual
   name, so exclude patterns match; scheduled runs take turns instead of piling up; an exclude
   naming a whole directory (`^/dir/`) also skips it during the scan; the LIMS example leaves out
