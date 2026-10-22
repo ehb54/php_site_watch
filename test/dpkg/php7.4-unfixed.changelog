@@ -1,0 +1,6 @@
+php7.4 (7.4.3-4ubuntu2.7) focal-security; urgency=medium
+
+  * Test fixture for php-site-watch: a build from before PHP2Shell.
+  * Earlier entries left out of this fixture.
+
+ -- php-site-watch tests <tests@example.org>  Mon, 01 Nov 2021 12:00:00 +0000

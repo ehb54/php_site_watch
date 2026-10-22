@@ -26,25 +26,29 @@ It reports:
 - network sockets of the PHP account other than web visitors and local connections, such as a
   listening backdoor or an outbound connection
 - server health: uptime and load, whether the web server and php-fpm services are running,
-  local disks over 90% full, the PHP version and, on RPM systems, whether its package includes
-  the PHP2Shell fix, whether php-fpm is still running a binary an update replaced, and zombie
-  processes of the PHP account
+  local disks over 90% full, the PHP version and whether its packages include the PHP2Shell fix
+  (RPM, Debian and Ubuntu), whether php-fpm is still running a binary an update replaced, and
+  zombie processes of the PHP account
 
-Processes in containers (Docker, Podman, Kubernetes, LXC) are left out: they can run under the
-same user ID as the host's PHP but belong to their own setups. The health section notes how many
-containers are running.
+On a host, processes in containers (Docker, Podman, Kubernetes, LXC) are left out: they can run
+under the same user ID as the host's PHP but belong to their own setups. The health section notes
+how many containers are running. To watch PHP in a container, run php-site-watch inside it (see
+[Containers](#containers)).
 
 ## Requirements
 
 - Linux, run as root (to read the logs and see every process and socket)
-- `perl` with no extra modules (tested with Perl 5.26 and 5.32), plus `ps`, `ss` and `find`.
-  On RHEL, Rocky or Oracle Linux: `dnf install perl-interpreter procps-ng iproute findutils git`
-- For the scheduled runs: cron (`cronie`), a local `sendmail` such as postfix configured to send
-  outgoing mail, and `logrotate` for the run log
+- `perl` with no extra modules (tested with Perl 5.26 to 5.40), plus `ps`, `ss` and `find`.
+  On RHEL, Rocky or Oracle Linux: `dnf install perl-interpreter procps-ng iproute findutils git`.
+  On Debian or Ubuntu, where perl and find are always there: `apt-get install procps iproute2 git`
+- For the scheduled runs: cron (`cronie`, or `cron` on Debian and Ubuntu), a local `sendmail`
+  such as postfix configured to send outgoing mail, and `logrotate` for the run log
 
 Tested on Rocky Linux 8.10 and 9.8, including a live Apache 2.4.37 + php-fpm 7.4.33 setup
-delivering through postfix. It reads php-fpm, PHP, Apache and nginx log formats, including
-rotated `.gz` files. Debian and Ubuntu log locations are recognized but haven't been tested.
+delivering through postfix, and in Ubuntu 20.04, 22.04 and 24.04 and Debian 12 and 13 containers,
+including the `docker exec` setup described under [Containers](#containers). It reads php-fpm,
+PHP, Apache and nginx log formats, including rotated `.gz` files, and has read the Apache logs of
+an Ubuntu 20.04 container running PHP 7.4 as mod_php.
 
 ## Install, update, uninstall
 
@@ -75,7 +79,7 @@ sudo cp examples/us3lims.conf /etc/php-site-watch.conf
   missing report also tells you something is wrong.
 
 `--mailfrom ADDRESS` sets the sender, if your mail relay needs a particular one. Leave out
-`--cron` to install the script only.
+`--cron` to install the script only. For PHP sites in containers, see [Containers](#containers).
 
 Who gets the reports:
 
@@ -134,8 +138,9 @@ tail -f /var/log/php-site-watch.log      # follow the scheduled runs
 ```
 
 Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can also be set in
-`/etc/php-site-watch.conf`; see [php-site-watch.conf.example](php-site-watch.conf.example), and
-[examples/us3lims.conf](examples/us3lims.conf) for an UltraScan LIMS server):
+`/etc/php-site-watch.conf`; see [php-site-watch.conf.example](php-site-watch.conf.example),
+[examples/us3lims.conf](examples/us3lims.conf) for an UltraScan LIMS server, and
+[examples/genapp.conf](examples/genapp.conf) for a GenApp container):
 
 | Option | Meaning |
 |---|---|
@@ -177,11 +182,91 @@ findings. The files, processes, sockets and health sections show the current sta
   a disk over 90% full, a PHP package without the PHP2Shell fix, or a php-fpm that needs a
   restart to pick up an update.
 
+## The PHP2Shell fix check
+
+Distributions backport the fix without changing PHP's own version (7.4.33 stays 7.4.33), so the
+health section looks for `CVE-2026-109618` in the changelog of the installed packages instead:
+
+- RPM systems (RHEL, Rocky, AlmaLinux, Oracle Linux): `rpm -q --changelog` of the package that
+  provides the running php-fpm, or the `php` command.
+- Debian and Ubuntu: `/usr/share/doc/phpX.Y-common/changelog.Debian.gz`, once for each PHP
+  version installed. The packages of a version (`phpX.Y-cli`, `libapache2-mod-phpX.Y`,
+  `phpX.Y-fpm` and so on) are built together, so this covers mod_php as well.
+
+The line ends in `yes`, `NO` (also listed with `!!` at the top), or, on Debian and Ubuntu,
+`unknown (no changelog)`. Docker's Ubuntu images keep these changelogs, but minimized systems that
+leave all of `/usr/share/doc` out, such as Debian's slim images, don't. There, compare the version
+on that line with the builds below. To keep the changelog from the next PHP update on, put this
+line in a file of its own in `/etc/dpkg/dpkg.cfg.d`, such as `zz-php-changelog` (it has to sort
+after the file that leaves the documentation out), before installing the update:
+
+```
+path-include=/usr/share/doc/php*/changelog.Debian.gz
+```
+
+Builds with the fix:
+
+| System | PHP | Fixed in |
+|---|---|---|
+| Ubuntu 20.04 | php7.4 | `7.4.3-4ubuntu2.29+esm5` (USN-8948-2, Ubuntu Pro) |
+| Ubuntu 22.04 | php8.1 | `8.1.2-1ubuntu2.28` (USN-8948-1) |
+| Ubuntu 24.04 | php8.3 | `8.3.6-0ubuntu0.24.04.13` (USN-8948-1) |
+| RHEL 8, Rocky, AlmaLinux, Oracle Linux 8 | php 7.4 module | `7.4.33-8` |
+
+## Containers
+
+Run inside a container, php-site-watch watches that container: its logs, files, processes and
+sockets. Containers often run no cron or mail server, so put it in each container and run it
+there from the host's cron with `docker exec` (`podman exec` works the same); cron mails what it
+prints. For a container called `web1`, from the clone on the host:
+
+```bash
+sudo docker cp php-site-watch.pl web1:/usr/local/sbin/php-site-watch
+sudo docker cp examples/genapp.conf web1:/etc/php-site-watch.conf    # or settings of your own
+sudo docker exec web1 /usr/local/sbin/php-site-watch                 # today's report
+```
+
+Then add the jobs to the host's cron, for example in `/etc/cron.d/php-site-watch-containers`:
+
+```
+MAILTO=you@example.org
+5 * * * * root docker exec web1 /usr/local/sbin/php-site-watch --alert
+0 7 * * * root docker exec web1 /usr/local/sbin/php-site-watch --status --date yesterday
+```
+
+With no `mail-to` in the container's config, `--alert` prints only when there is something new
+and `--status` prints its report every day, so cron mails exactly those. The alert history and
+run log stay in the container, and start afresh when it is created again. `docker exec` runs as
+the container's root unless the image names another user; then add `-u root`. Copy the script
+again after updating the clone. [examples/genapp.conf](examples/genapp.conf) is for GenApp
+containers (Apache with mod_php, PHP running as `www-data`).
+
+Docker gives a container's root no `CAP_SYS_PTRACE`, which `ss` needs to tell which process owns
+a socket, so the report warns that the sockets section is incomplete. To see the PHP account's
+sockets too, create the container with `--cap-add SYS_PTRACE`. Inside a container, the disk line
+shows the container's `/` as the host disk it is stored on.
+
+A plain run (no `--alert` or `--status`) writes nothing, so it can also check a snapshot of a
+container, such as an image made with `docker commit`, in a throwaway container that starts none
+of its services. Nothing runs there, so name the PHP account, check one day at a time with
+`--date`, and set `--hours`, which counts back from now, to cover the changed files of interest:
+
+```bash
+sudo docker run --rm --read-only --network none \
+    -v "$PWD/php-site-watch.pl:/usr/local/sbin/php-site-watch:ro" \
+    -v "$PWD/examples/genapp.conf:/etc/php-site-watch.conf:ro" \
+    --entrypoint /usr/local/sbin/php-site-watch snapshot-image:tag \
+    --user www-data --date 2026-10-21 --hours 72
+```
+
+The options after the image name are php-site-watch's. Only the logs, files and health mean
+something there; the processes and sockets are those of the throwaway container.
+
 ## Tests
 
-`test/` holds sample logs with planted problems and three test scripts, which print `ok` or
-`FAIL` per check. Run them in throwaway Rocky containers from the repository directory (each
-works with `:8` and `:9`):
+`test/` holds sample logs with planted problems, fixture changelogs and test scripts, which print
+`ok` or `FAIL` per check. Run them in throwaway containers from the repository directory (the
+Rocky ones work with `:8` and `:9`):
 
 ```bash
 # sample logs, planted files, processes and sockets, mail through a stand-in sendmail,
@@ -193,10 +278,25 @@ podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:8 bash /t/test-el8-live.sh
 # setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate, uninstall
 podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh
+# Ubuntu: the PHP2Shell fix check through dpkg with fixture packages, missing ps and ss, the disk
+# line in a container, examples/genapp.conf (:20.04, :22.04 or :24.04, or debian:12-slim; run it
+# a second time with --cap-add SYS_PTRACE for the other half of the sockets checks)
+podman run --rm -q -v "$PWD:/s:ro,z" docker.io/library/ubuntu:22.04 bash /s/test/test-ubuntu.sh
+```
+
+`docker run` works the same way. One more test runs on a Docker host itself and follows
+[Containers](#containers): `docker exec` as the host's cron would run it, and a snapshot check:
+
+```bash
+bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 ```
 
 ## Versions
 
+- **1.6.0:** Debian and Ubuntu: PHP2Shell fix check through dpkg; in containers: the disk line
+  shows the host disk under `/` instead of mounted files such as `/etc/hosts`, and a warning when
+  the PHP account's sockets can't be seen; plain warnings for a missing `ss`, `ps` or `find`;
+  `examples/genapp.conf`; how to run it in containers
 - **1.5.0:** run log `/var/log/php-site-watch.log`, saved latest status and alert reports, `--last`
 - **1.4.1:** fix moving addresses off old cron jobs that have no `--mail-from`
 - **1.4.0:** recipients kept in the config; `setup.sh mail list|add|remove|from|test`

@@ -7,6 +7,7 @@
 #
 # Needs only perl itself (no extra modules) plus ps, ss and find; mail goes through sendmail,
 # which postfix provides. Run it as root so it can read the logs and see every process and socket.
+# In a container, it watches that container; run it there with docker exec from the host's cron.
 # https://github.com/ehb54/php_site_watch
 #
 # Usage: php-site-watch [options]
@@ -40,7 +41,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.5.0';
+our $VERSION = '1.6.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -156,11 +157,14 @@ if (defined $opt{'mail-from'}) {
 
 my $host = hostname();
 my $my_container = container_of('self');    # '' unless this script itself runs in a container
+# Docker and Podman mark their containers with a file, which also works when the cgroup paths are hidden
+my $in_container = length $my_container || -e '/.dockerenv' || -e '/run/.containerenv';
 my %other_container;                         # cache for in_other_container()
 my @warn;
 push @warn, 'not running as root: some logs, processes and sockets may be invisible' if $> != 0;
 
-my $user = $opt{user} // detect_user() // fail('could not tell which account PHP runs as; pass --user');
+my $user = $opt{user} // detect_user()
+        // fail('could not tell which account PHP runs as' . (have('ps') ? '' : ' (ps not found)') . '; pass --user');
 my ($uid, $home) = (getpwnam $user)[2, 7];
 fail("unknown user '$user'") unless defined $uid;
 
@@ -222,7 +226,7 @@ if (@scan) {
         }
         close $fh;
     } else {
-        push @warn, "cannot run find: $!";
+        push @warn, cannot_run('find', 'changed files');
     }
 }
 @changed = map { clean(scalar(localtime((stat $_)[9] // 0)) . "  $_") }
@@ -242,7 +246,7 @@ if (my $fh = quiet_open('ps', '-u', $user, '-o', 'pid=,stat=,lstart=,args=')) {
     }
     close $fh;
 } else {
-    push @warn, "cannot run ps: $!";
+    push @warn, cannot_run('ps', 'processes and sockets');
 }
 
 my @socks;
@@ -268,10 +272,14 @@ if (my $fh = quiet_open('ss', '-tanp')) {
         push @socks, clean("$state  $local -> $peer  $who");
     }
     close $fh;
+    # ss can name a socket's process only if it may read the process's open files, which takes the
+    # same right as reading its /proc/PID/exe. Root without CAP_SYS_PTRACE, as in a Docker container,
+    # has it for its own processes but not for PHP's, so ss names some sockets and leaves PHP's out.
+    my $hidden = grep { !defined readlink("/proc/$_/exe") && -e "/proc/$_" } keys %userpid;
     push @warn, 'ss could not show which processes own sockets (needs root with CAP_SYS_PTRACE), so the sockets section is incomplete'
-        if $sockets && !$owned;
+        if $hidden || ($sockets && !$owned);
 } else {
-    push @warn, "cannot run ss: $!";
+    push @warn, cannot_run('ss', 'sockets');
 }
 
 # --- report -------------------------------------------------------------------------------------
@@ -468,11 +476,15 @@ sub health {
         }
     }
 
+    # A container's own root is an overlay that reports the host disk under it; other overlays are
+    # containers seen from the host. Files mounted into a container, such as /etc/hosts, are not disks.
     my @use;
-    for (cmd_lines('df', '-lP', map { ('-x', $_) } qw(tmpfs devtmpfs squashfs overlay efivarfs))) {
+    for (cmd_lines('df', '-lPT', map { ('-x', $_) } qw(tmpfs devtmpfs squashfs efivarfs))) {
         my @f = split ' ';
-        next unless @f >= 6 && $f[4] =~ /^(\d+)%$/;
-        my ($pct, $mount) = ($1, join(' ', @f[5 .. $#f]));
+        next unless @f >= 7 && $f[5] =~ /^(\d+)%$/;
+        my ($type, $pct, $mount) = ($f[1], $1, join(' ', @f[6 .. $#f]));
+        next if !-d $mount || ($type eq 'overlay' && $mount ne '/');
+        $mount .= ' (host disk)' if $type eq 'overlay' && $in_container;
         push @use, "$mount $pct%";
         push @problems, "disk $mount $pct% full" if $pct >= 90;
     }
@@ -503,6 +515,22 @@ sub health {
                 push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg: " . ($fixed ? 'yes' : 'NO');
                 push @problems, "$pkg lacks the PHP2Shell fix" unless $fixed;
             }
+        }
+    }
+    # Debian and Ubuntu: the packages of a PHP version (phpX.Y-cli, libapache2-mod-phpX.Y, phpX.Y-fpm)
+    # are built together, and phpX.Y-common carries their changelog, unless the system leaves all
+    # documentation out (as Debian's slim images do; Ubuntu's keep changelogs).
+    if (have('dpkg-query')) {
+        for (cmd_lines('dpkg-query', '-W', '-f', '${Package} ${Version} ${Status}\n', 'php*-common')) {
+            my ($pkg, $version) = /^(php\d[\d.]*-common) (\S+) \S+ \S+ (?:installed|unpacked|half-configured|triggers-\w+)$/ or next;
+            my $changelog = "/usr/share/doc/$pkg/changelog.Debian.gz";
+            my $fixed     = 'unknown (no changelog)';
+            if (-e $changelog) {
+                my @log = cmd_lines('gzip', '-dc', '--', $changelog);
+                $fixed = !@log ? "unknown (cannot read $changelog)" : (grep { /CVE-2026-109618/ } @log) ? 'yes' : 'NO';
+            }
+            push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg $version: $fixed";
+            push @problems, "$pkg $version lacks the PHP2Shell fix" if $fixed eq 'NO';
         }
     }
     return ({ title => 'Server health (now)', alert => 0, lines => [ (map { "!! $_" } @problems), @lines ] }, @problems);
@@ -566,9 +594,22 @@ sub open_log {
 sub quiet_open {
     open my $saved, '>&', \*STDERR or return;
     open STDERR, '>', '/dev/null';
-    my $ok = open my $fh, '-|', @_;
+    my $ok  = open my $fh, '-|', @_;
+    my $err = $! + 0;
     open STDERR, '>&', $saved;
+    $! = $err;    # restoring STDERR would otherwise replace why the command did not start
     return $ok ? $fh : undef;
+}
+
+sub have { my ($cmd) = @_; return scalar grep { -f "$_/$cmd" && -x _ } split /:/, $ENV{PATH} }
+
+# Why a command the checks need did not run: not installed (naming the package to install), or the error.
+sub cannot_run {
+    my ($cmd, $what) = @_;
+    my $err = "$!";
+    return "cannot run $cmd: $err" if have($cmd);
+    my %pkg = (ps => [qw(procps-ng procps)], ss => [qw(iproute iproute2)], find => [qw(findutils findutils)]);
+    return "$cmd not found (install $pkg{$cmd}[have('dpkg-query') ? 1 : 0]); $what not checked";
 }
 
 sub cmd_lines {
