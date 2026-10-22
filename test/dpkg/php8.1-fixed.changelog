@@ -1,0 +1,10 @@
+php8.1 (8.1.2-1ubuntu2.28) jammy-security; urgency=medium
+
+  * Test fixture for php-site-watch, in the form of an Ubuntu security update.
+  * SECURITY UPDATE: memory corruption after running out of memory while
+    parsing a multipart request (PHP2Shell)
+    - CVE-2026-109618
+  * SECURITY UPDATE: global state left stale after a bailout (PHP2Shell)
+    - CVE-2026-109619
+
+ -- php-site-watch tests <tests@example.org>  Wed, 21 Oct 2026 12:00:00 +0000
