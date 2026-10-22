@@ -86,7 +86,7 @@ MAILTO=${mailto// /}
 EOF
         chmod 644 "$cron"
         echo "installed $cron (hourly alerts and a daily status report to $mailto)"
-        echo "to check that mail gets through, send a status report now: $bin --status $mail"
+        echo "to check that mail gets through, send a status report now: sudo $bin --status $mail"
     elif [[ -e $cron ]]; then
         echo "kept $cron"
     fi

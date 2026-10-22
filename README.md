@@ -45,7 +45,7 @@ cd php_site_watch
 sudo ./setup.sh install --cron --mailto you@example.org
 ```
 
-This installs `/usr/local/sbin/php-site-watch`, a fully commented `/etc/php-site-watch.conf` (only
+This installs `/usr/local/sbin/php-site-watch` (use the full path with `sudo`: on RHEL and similar systems its safe PATH leaves out `/usr/local/sbin`), a fully commented `/etc/php-site-watch.conf` (only
 if there isn't one yet), and `/etc/cron.d/php-site-watch` with two jobs that mail to the given
 addresses (comma-separated; root if `--mailto` is left out):
 
@@ -60,7 +60,7 @@ addresses (comma-separated; root if `--mailto` is left out):
 `--cron` to install the script only. To check that mail gets through:
 
 ```bash
-sudo php-site-watch --status --mail-to you@example.org
+sudo /usr/local/sbin/php-site-watch --status --mail-to you@example.org
 ```
 
 Later:
@@ -77,10 +77,10 @@ again rewrites it.
 ## Use
 
 ```bash
-sudo php-site-watch                      # today, printed
-sudo php-site-watch --date yesterday     # or YYYY-MM-DD, in the server's local time
-sudo php-site-watch --quiet              # print only findings, nothing if all is clean
-sudo php-site-watch --status --mail-to you@example.org   # mail the daily report now
+sudo /usr/local/sbin/php-site-watch                      # today, printed
+sudo /usr/local/sbin/php-site-watch --date yesterday     # or YYYY-MM-DD, in the server's local time
+sudo /usr/local/sbin/php-site-watch --quiet              # print only findings, nothing if all is clean
+sudo /usr/local/sbin/php-site-watch --status --mail-to you@example.org   # mail the daily report now
 ```
 
 Exit status: 0 nothing suspicious, 1 findings, 2 usage or setup error.
