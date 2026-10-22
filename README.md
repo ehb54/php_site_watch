@@ -86,8 +86,8 @@ Later:
 
 ```bash
 sudo ./setup.sh update             # pull the latest version and reinstall; config and cron job are kept
-sudo ./setup.sh uninstall          # remove the script and cron job; config and alert history are kept
-sudo ./setup.sh uninstall --purge  # also remove /etc/php-site-watch.conf and the alert history
+sudo ./setup.sh uninstall          # remove the script, cron job and logrotate entry; config, history and log are kept
+sudo ./setup.sh uninstall --purge  # also remove /etc/php-site-watch.conf, /var/lib/php-site-watch and the run log
 ```
 
 To change the schedule, edit `/etc/cron.d/php-site-watch`; running `setup.sh install --cron`
@@ -102,9 +102,29 @@ sudo /usr/local/sbin/php-site-watch --quiet              # print only findings, 
 sudo /usr/local/sbin/php-site-watch --status --mail-to you@example.org   # mail the daily report now
 ```
 
-Exit status: 0 nothing suspicious, 1 findings, 2 usage or setup error.
+Exit status: 0 nothing suspicious, 1 findings, 2 usage or setup error. A plain run never mails,
+even with recipients configured.
 
-Options (all but `--quiet`, `--alert`, `--status` and `--version` can also be set in
+### Seeing what the scheduled runs found
+
+Each `--alert` and `--status` run adds a line to `/var/log/php-site-watch.log`, rotated monthly:
+
+```
+2026-10-22 07:00:02  status  2026-10-21: OK; mailed to you@example.org
+2026-10-22 08:05:01  alert   2026-10-21 and 2026-10-22: 2 findings, 1 new; mailed to you@example.org
+2026-10-22 09:05:01  alert   2026-10-21 and 2026-10-22: 2 findings, 0 new; nothing new to send
+```
+
+The latest status report and alert are also saved, as mailed, in `/var/lib/php-site-watch`
+(readable by root only, since they name IP addresses, files and processes). To see the recent
+runs and both reports without running the checks again:
+
+```bash
+sudo /usr/local/sbin/php-site-watch --last
+tail -f /var/log/php-site-watch.log      # follow the scheduled runs
+```
+
+Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can also be set in
 `/etc/php-site-watch.conf`; see [php-site-watch.conf.example](php-site-watch.conf.example), and
 [examples/us3lims.conf](examples/us3lims.conf) for an UltraScan LIMS server):
 
@@ -125,6 +145,7 @@ Options (all but `--quiet`, `--alert`, `--status` and `--version` can also be se
 | `--status` | full report plus server health |
 | `--mail-to ADDRESSES` | with `--alert` or `--status`, mail instead of printing (comma-separated; replaces the config's recipients) |
 | `--mail-from ADDRESS` | sender address for mail |
+| `--last` | print the recent scheduled runs and their latest saved reports, without checking |
 | `--version` | print the version |
 
 The PHP fatal error, 5xx, POST and health sections are for context and don't count as findings. The files,

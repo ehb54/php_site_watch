@@ -2,7 +2,7 @@
 # Exercise setup.sh install / mail / uninstall in a throwaway Rocky container. From the repository directory:
 #   podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh   (or :8)
 set -u
-dnf -y -q install perl-interpreter procps-ng iproute findutils > /dev/null 2>&1 || exit 9
+dnf -y -q install perl-interpreter procps-ng iproute findutils logrotate > /dev/null 2>&1 || exit 9
 cp -r /s /repo && cd /repo
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
@@ -13,6 +13,7 @@ conf=/etc/php-site-watch.conf
 check 'script installed and runs' '[[ -x /usr/local/sbin/php-site-watch ]] && php-site-watch --version | grep -q "^php-site-watch "'
 check 'commented config installed' '[[ -f $conf ]] && ! grep -qv "^\s*\(#\|$\)" $conf'
 check 'no cron job without --cron' '[[ ! -e $c ]]'
+check 'logrotate entry installed and valid' '[[ -f /etc/logrotate.d/php-site-watch ]] && logrotate -d /etc/logrotate.d/php-site-watch > /dev/null 2>&1'
 php-site-watch --user nobody --scan /nonexistent > /tmp/run.txt; rc=$?
 check 'runs with the installed config (exit 0 or 1)' '((rc <= 1)) && grep -q "^php-site-watch " /tmp/run.txt'
 
@@ -56,6 +57,8 @@ check 'mail add rejects a malformed address' '((rc == 1))'
 ./setup.sh mail test > /tmp/test.txt; rc=$?
 check 'mail test reports where it went' '((rc == 0)) && grep -q "status report mailed to: ops@example.org, third@example.org, b@example.org" /tmp/test.txt'
 check 'mail test mailed every recipient' 'grep -q "^To: ops@example.org, third@example.org, b@example.org$" /tmp/mail/1.txt && grep -q "^From: watch@example.org$" /tmp/mail/1.txt'
+/usr/local/sbin/php-site-watch --last > /tmp/last.txt
+check 'mail test shows up in the run log and --last' 'grep -qE "  status  .*: .*; mailed to ops@example.org, third@example.org, b@example.org$" /var/log/php-site-watch.log && grep -q "^Sent:    mailed to ops@example.org, third@example.org, b@example.org$" /tmp/last.txt'
 ./setup.sh mail from none > /dev/null
 check 'mail from none clears the sender' '! grep -q "^mail-from" $conf'
 
@@ -105,10 +108,10 @@ check 'reinstall without --cron keeps the cron job' 'grep -q "kept $c" /tmp/agai
 
 mkdir -p /var/lib/php-site-watch
 ./setup.sh uninstall
-check 'uninstall removes script and cron job' '[[ ! -e /usr/local/sbin/php-site-watch && ! -e $c ]]'
-check 'uninstall keeps the config and alert history' '[[ -e $conf && -d /var/lib/php-site-watch ]]'
+check 'uninstall removes script and cron job' '[[ ! -e /usr/local/sbin/php-site-watch && ! -e $c && ! -e /etc/logrotate.d/php-site-watch ]]'
+check 'uninstall keeps the config and alert history' '[[ -e $conf && -d /var/lib/php-site-watch && -e /var/log/php-site-watch.log ]]'
 ./setup.sh uninstall --purge
-check 'uninstall --purge removes config and alert history' '[[ ! -e $conf && ! -e /var/lib/php-site-watch ]]'
+check 'uninstall --purge removes config and alert history' '[[ ! -e $conf && ! -e /var/lib/php-site-watch && ! -e /var/log/php-site-watch.log ]]'
 
 ./setup.sh bogus > /dev/null 2>&1; rc=$?
 check 'unknown command shows usage and fails' '((rc == 1))'

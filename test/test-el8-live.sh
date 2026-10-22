@@ -64,6 +64,8 @@ sleep 5
 grep '^Subject:' /var/spool/mail/root
 check 'postfix delivered the status report' 'grep -qE "^Subject: \[php-site-watch\] \S+ $(date +%F): [0-9]+ findings?$" /var/spool/mail/root'
 check 'postfix delivered exactly one alert' '(($(grep -c "^Subject: \[php-site-watch\] ALERT" /var/spool/mail/root) == 1))'
+perl /s/php-site-watch.pl --last > /tmp/last.txt
+check 'run log and --last after real runs' '(($(wc -l < /var/log/php-site-watch.log) == 3)) && grep -q "  alert   .*0 new; nothing new to send$" /var/log/php-site-watch.log && grep -q "^Sent:    mailed to root$" /tmp/last.txt'
 
 echo; ((fail)) && echo 'SOME TESTS FAILED' || echo 'all live tests passed'
 exit $fail

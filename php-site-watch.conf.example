@@ -31,3 +31,8 @@
 # address if your relay needs one. "setup.sh mail add/remove/from" maintains these lines.
 # mail-to = you@example.org
 # mail-from = php-site-watch@example.org
+
+# Where scheduled runs log one line each (none to turn it off), and where alert history and the
+# latest saved reports are kept.
+# log-file = /var/log/php-site-watch.log
+# state-dir = /var/lib/php-site-watch

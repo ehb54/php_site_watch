@@ -73,7 +73,7 @@ n=$(ls /tmp/mail | wc -l)
 { echo "ARGS: $*"; cat; } > /tmp/mail/$((n + 1)).txt
 EOF
 chmod +x /tmp/fake-sendmail
-mailopts=(--config /t/test.conf "${logs[@]}" --sendmail /tmp/fake-sendmail --state-dir /tmp/state)
+mailopts=(--config /t/test.conf "${logs[@]}" --sendmail /tmp/fake-sendmail --state-dir /tmp/state --log-file /tmp/run.log)
 perl /s/php-site-watch.pl --status --mail-to ops@example.org,second@example.org --mail-from watch@example.org "${mailopts[@]}" > /tmp/out.txt; rc=$?
 check 'status is mailed, not printed' '[[ -f /tmp/mail/1.txt && ! -s /tmp/out.txt ]] && ((rc == 1))'
 check 'status mail headers' 'grep -q "^ARGS: -oi -t -f watch@example.org$" /tmp/mail/1.txt && grep -q "^To: ops@example.org, second@example.org$" /tmp/mail/1.txt && grep -q "^From: watch@example.org$" /tmp/mail/1.txt && grep -qE "^Subject: \[php-site-watch\] \S+ $today: [0-9]+ findings$" /tmp/mail/1.txt'
@@ -86,9 +86,15 @@ check 'second alert sends nothing' '[[ ! -e /tmp/mail/3.txt ]]'
 runas touch /srv/www/htdocs/another.php
 perl /s/php-site-watch.pl --alert --mail-to ops@example.org "${mailopts[@]}"
 check 'third alert has only the new file' 'grep -q "^Subject: .*ALERT .*: 1 new finding$" /tmp/mail/3.txt && grep -q another.php /tmp/mail/3.txt && ! grep -q shell.php /tmp/mail/3.txt'
+check 'run log: one line per run' '(($(wc -l < /tmp/run.log) == 4)) && grep -qE "^\S+ \S+  status  $today: [0-9]+ findings; mailed to ops@example.org, second@example.org$" /tmp/run.log && grep -qE "^\S+ \S+  alert   .*: [0-9]+ findings, 0 new; nothing new to send$" /tmp/run.log && grep -qE "^\S+ \S+  alert   .*: [0-9]+ findings, 1 new; mailed to ops@example.org$" /tmp/run.log'
+check 'latest status and alert saved' 'grep -q "^Sent:    mailed to ops@example.org, second@example.org$" /tmp/state/last-status.txt && grep -q "== Server health" /tmp/state/last-status.txt && grep -q "^Subject: .*ALERT .*: 1 new finding$" /tmp/state/last-alert.txt && grep -q another.php /tmp/state/last-alert.txt'
+perl /s/php-site-watch.pl --last --state-dir /tmp/state --log-file /tmp/run.log > /tmp/last.txt
+check '--last shows the runs and both reports' 'grep -q "^== Recent runs" /tmp/last.txt && grep -q "^== Latest status report" /tmp/last.txt && grep -q "^== Latest alert report" /tmp/last.txt && grep -q another.php /tmp/last.txt && (($(grep -c "  alert   " /tmp/last.txt) == 3))'
+perl /s/php-site-watch.pl --status --config /t/test.conf "${logs[@]}" --mail-to ops@example.org --sendmail /nonexistent/sendmail --state-dir /tmp/state --log-file /tmp/run.log 2> /dev/null; rc=$?
+check 'a mail failure is logged' '((rc == 2)) && grep -qE "  status  error: cannot run /nonexistent/sendmail" /tmp/run.log'
 cp /t/test.conf /tmp/mail.conf
 printf 'mail-to = cfg1@example.org\nmail-to = cfg2@example.org, cfg3@example.org\n' >> /tmp/mail.conf
-cfgopts=("${logs[@]}" --sendmail /tmp/fake-sendmail --state-dir /tmp/state)
+cfgopts=("${logs[@]}" --sendmail /tmp/fake-sendmail --state-dir /tmp/state --log-file /tmp/run.log)
 perl /s/php-site-watch.pl --status --config /tmp/mail.conf "${cfgopts[@]}"
 check 'recipients come from the config' 'grep -q "^To: cfg1@example.org, cfg2@example.org, cfg3@example.org$" /tmp/mail/4.txt'
 perl /s/php-site-watch.pl --status --config /tmp/mail.conf --mail-to only@example.org "${cfgopts[@]}"

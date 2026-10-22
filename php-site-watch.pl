@@ -30,21 +30,25 @@
 #                        (comma-separated; replaces the mail-to lines of the config file;
 #                        alerts are mailed only when there is something new)
 #   --mail-from ADDRESS  sender address for mail (default: the system's)
+#   --last               print the recent --alert and --status runs and their latest saved
+#                        reports, without running the checks
 #   --version            print the version and exit
+# Each --alert and --status run adds a line to /var/log/php-site-watch.log (config: log-file)
+# and saves its report in /var/lib/php-site-watch (config: state-dir).
 # Exit status: 0 nothing suspicious, 1 findings, 2 usage or setup error.
 
 use strict;
 use warnings;
 
-our $VERSION = '1.4.1';
+our $VERSION = '1.5.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 $ENV{LC_ALL} = 'C';
 
-my %single = map { $_ => 1 } qw(date hours user config mail-from sendmail state-dir);
+my %single = map { $_ => 1 } qw(date hours user config mail-from sendmail state-dir log-file);
 my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer mail-to);
-my %flag   = map { $_ => 1 } qw(quiet alert status);
+my %flag   = map { $_ => 1 } qw(quiet alert status last);
 
 my @mon = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
 my %mon = map { $mon[$_] => $_ + 1 } 0 .. 11;
@@ -60,7 +64,14 @@ my @default_exclude    = (qr{^/var/lib/php/(?:session|opcache)/}, qr{/sess_[\w,-
 my @default_allow_proc = (qr{^(?:\S*/)?(?:httpd|apache2)\b}, qr{^nginx: }, qr{^php-fpm: }, qr{^(?:\S*/)?(?:php-cgi|lsphp)\b});
 my $remember_days      = 14;    # how long --alert remembers what it already reported
 
-sub fail { print STDERR "php-site-watch: $_[0]\n"; exit 2 }
+my ($mode, $log_file);    # set once the options are read; fail() logs the errors of scheduled runs
+
+sub fail {
+    my ($msg) = @_;
+    print STDERR "php-site-watch: $msg\n";
+    run_log("error: $msg") if $mode && $mode ne 'report';
+    exit 2;
+}
 
 sub usage {
     my ($status, $msg) = @_;
@@ -116,8 +127,12 @@ $opt{$_} = $cli{$_} for grep { !$flag{$_} } keys %cli;
 push @{ $list{$_} }, @{ $cli_list{$_} } for grep { $_ ne 'mail-to' } keys %multi;
 $list{'mail-to'} = $cli_list{'mail-to'} if @{ $cli_list{'mail-to'} };    # a test mail goes only where asked
 
+my $state_dir = $opt{'state-dir'} // '/var/lib/php-site-watch';
+$log_file     = $opt{'log-file'}  // '/var/log/php-site-watch.log';
+if ($cli{last}) { show_last(); exit 0 }
+
 usage(2, '--alert and --status cannot be combined') if $cli{alert} && $cli{status};
-my $mode  = $cli{alert} ? 'alert' : $cli{status} ? 'status' : 'report';
+$mode     = $cli{alert} ? 'alert' : $cli{status} ? 'status' : 'report';
 my $quiet = $cli{quiet} ? 1 : 0;
 
 my $today     = local_ymd(time);
@@ -281,8 +296,7 @@ my $header = "php-site-watch $VERSION: $day_label on $host, PHP account $user, "
            . join('', map { "warning: $_\n" } @warn);
 
 if ($mode eq 'alert') {
-    my $dir   = $opt{'state-dir'} // '/var/lib/php-site-watch';
-    my $state = "$dir/alerted";
+    my $state = "$state_dir/alerted";
     my $since = local_ymd(time - $remember_days * 86400);
     my (%known, @keep);
     if (open my $fh, '<', $state) {
@@ -302,17 +316,21 @@ if ($mode eq 'alert') {
         push @new_keys, map { key_of($s, $_) } @new;
         push @new_sections, { %$s, lines => \@new, tail => 50, head => undef };
     }
-    if (@new_keys) {
-        my $n = @new_keys;
-        deliver("[php-site-watch] ALERT $host: $n new finding" . ($n == 1 ? '' : 's'),
-            $header . render(\@new_sections, 0)
-            . "\n$n new item(s) to look at. Each is reported once; run php-site-watch on $host for the full report.\n");
-        mkdir $dir, 0700 unless -d $dir;
+    my $n     = @new_keys;
+    my $where = 'nothing new to send';
+    if ($n) {
+        my $subject = "[php-site-watch] ALERT $host: $n new finding" . ($n == 1 ? '' : 's');
+        my $body    = $header . render(\@new_sections, 0)
+                    . "\n$n new item(s) to look at. Each is reported once; run php-site-watch on $host for the full report.\n";
+        $where = deliver($subject, $body);
+        save_report('alert', $subject, $body, $where);
+        mkdir $state_dir, 0700 unless -d $state_dir;
         open my $fh, '>', "$state.new" or fail("cannot write $state.new: $!");
         print $fh "$_\n" for @keep, map { "$today\t$_" } @new_keys;
         close $fh or fail("cannot write $state.new: $!");
         rename "$state.new", $state or fail("cannot replace $state: $!");
     }
+    run_log("$day_label: $findings finding" . ($findings == 1 ? '' : 's') . ", $n new; $where");
     exit($findings ? 1 : 0);
 }
 
@@ -322,8 +340,12 @@ my $summary = $findings ? "$findings item(s) to look at" : @problems ? 'nothing 
             : 'nothing suspicious found';
 
 if ($mode eq 'status') {
-    my $what = $findings ? "$findings finding" . ($findings == 1 ? '' : 's') : @problems ? 'check ' . join('; ', @problems) : 'OK';
-    deliver("[php-site-watch] $host $date: $what", $header . render(\@all, 0) . "\n$summary\n");
+    my $what    = $findings ? "$findings finding" . ($findings == 1 ? '' : 's') : @problems ? 'check ' . join('; ', @problems) : 'OK';
+    my $subject = "[php-site-watch] $host $date: $what";
+    my $body    = $header . render(\@all, 0) . "\n$summary\n";
+    my $where   = deliver($subject, $body);
+    save_report('status', $subject, $body, $where);
+    run_log("$date: $what; $where");
 } elsif (!$quiet || $findings) {
     print $header, render(\@all, $quiet), ($quiet ? '' : "\n$summary\n");
 }
@@ -361,7 +383,7 @@ sub deliver {
     my ($subject, $body) = @_;
     unless (@mail_to) {
         print "$subject\n\n$body";
-        return;
+        return 'printed (no recipients)';
     }
     my $sendmail = $opt{sendmail} // '/usr/sbin/sendmail';
     my @args = ('-oi', '-t', (defined $opt{'mail-from'} ? ('-f', $opt{'mail-from'}) : ()));
@@ -371,6 +393,57 @@ sub deliver {
     print $mh "Subject: $subject\n", "MIME-Version: 1.0\n", "Content-Type: text/plain; charset=UTF-8\n",
               "Content-Transfer-Encoding: 8bit\n", "Auto-Submitted: auto-generated\n\n", $body;
     close $mh or fail("$sendmail failed (exit status " . ($? >> 8) . "); nothing was mailed");
+    return 'mailed to ' . join(', ', @mail_to);
+}
+
+sub now_stamp {
+    my @t = localtime;
+    return sprintf '%04d-%02d-%02d %02d:%02d:%02d', $t[5] + 1900, $t[4] + 1, @t[3, 2, 1, 0];
+}
+
+# One line per --alert or --status run, for anyone following along with tail -f.
+sub run_log {
+    my ($text) = @_;
+    return if !defined $log_file || $log_file eq '' || $log_file eq 'none';
+    if (open my $fh, '>>', $log_file) {
+        printf $fh "%s  %-6s  %s\n", now_stamp(), $mode, $text;
+        close $fh;
+    } else {
+        print STDERR "php-site-watch: cannot write $log_file: $!\n";
+    }
+}
+
+# Keep the latest report of each kind, so --last can show it without running the checks again.
+sub save_report {
+    my ($name, $subject, $body, $where) = @_;
+    my $file = "$state_dir/last-$name.txt";
+    mkdir $state_dir, 0700 unless -d $state_dir;
+    if (open my $fh, '>', "$file.new") {
+        print $fh 'Saved:   ', now_stamp(), "\nSubject: $subject\nSent:    $where\n\n$body";
+        close $fh;
+        rename "$file.new", $file or print STDERR "php-site-watch: cannot replace $file: $!\n";
+    } else {
+        print STDERR "php-site-watch: cannot write $file.new: $!\n";
+    }
+}
+
+sub show_last {
+    print "== Recent runs ($log_file)\n";
+    if (open my $fh, '<', $log_file) {
+        my @l = <$fh>;
+        print @l > 12 ? @l[-12 .. -1] : @l ? @l : "(none yet)\n";
+    } else {
+        print $! =~ /No such file/ ? "(none yet)\n" : "cannot read it: $!\n";
+    }
+    for my $name (qw(status alert)) {
+        my $file = "$state_dir/last-$name.txt";
+        print "\n== Latest $name report ($file)\n";
+        if (open my $fh, '<', $file) {
+            print <$fh>;
+        } else {
+            print $! =~ /No such file/ ? "(none yet)\n" : "cannot read it: $! (run as root)\n";
+        }
+    }
 }
 
 # Basic server health for --status and normal reports: returns the section and the problems found.

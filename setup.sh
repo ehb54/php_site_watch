@@ -15,8 +15,9 @@
 #           Without --cron, an existing cron job is kept.
 # update    pulls the latest version into this clone and reinstalls it, keeping the config
 #           and cron job.
-# uninstall removes the script and the cron job; --purge also removes /etc/php-site-watch.conf
-#           and the alert history in /var/lib/php-site-watch.
+# uninstall removes the script, the cron job and the logrotate entry; --purge also removes
+#           /etc/php-site-watch.conf, the alert history and saved reports in /var/lib/php-site-watch,
+#           and the run log /var/log/php-site-watch.log.
 # mail      lists, adds or removes report recipients (the mail-to lines of the config), sets
 #           or clears the sender address, or mails a status report to every recipient now.
 #           With no recipients, cron mails the reports to root instead.
@@ -27,6 +28,8 @@ bin=/usr/local/sbin/php-site-watch
 conf=/etc/php-site-watch.conf
 cron=/etc/cron.d/php-site-watch
 state=/var/lib/php-site-watch
+logrotate=/etc/logrotate.d/php-site-watch
+runlog=/var/log/php-site-watch.log
 address='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$|^[A-Za-z0-9._-]+$'    # user@host, or a local name like root
 
 die() { echo "setup: $*" >&2; exit 1; }
@@ -193,6 +196,20 @@ do_install() {
 
     install -m 755 "$here/php-site-watch.pl" "$bin"
     echo "installed $bin ($("$bin" --version))"
+    if [[ -d /etc/logrotate.d ]]; then
+        [[ -e $logrotate ]] || echo "installed $logrotate (the run log $runlog is rotated monthly)"
+        cat > "$logrotate" <<EOF
+# php-site-watch run log (installed by setup.sh)
+$runlog {
+    monthly
+    rotate 12
+    compress
+    missingok
+    notifempty
+}
+EOF
+        chmod 644 "$logrotate"
+    fi
     if [[ -e $conf ]]; then echo "kept $conf"; else ensure_conf; fi
     [[ -n $mailto ]] && mail_add ${mailto//,/ } > /dev/null
     [[ -n $mailfrom ]] && mail_from "$mailfrom" > /dev/null
@@ -221,6 +238,7 @@ EOF
         list=$(recipients | paste -sd, - | sed 's/,/, /g')
         echo "reports go to: ${list:-root (no recipients set; add them with: $0 mail add ADDRESS)}"
         [[ -n $list ]] && echo "to check that mail gets through: sudo $0 mail test"
+        echo "to see the latest results: sudo $bin --last"
     fi
     return 0
 }
@@ -251,12 +269,15 @@ do_uninstall() {
         *) die "unknown uninstall option: $1" ;;
     esac
     local f
-    for f in "$bin" "$cron"; do
+    for f in "$bin" "$cron" "$logrotate"; do
         [[ -e $f ]] && rm -f "$f" && echo "removed $f"
     done
     if ((purge)); then
         [[ -e $conf ]] && rm -f "$conf" && echo "removed $conf"
         [[ -d $state ]] && rm -rf "$state" && echo "removed $state"
+        for f in "$runlog" "$runlog".*; do
+            [[ -e $f ]] && rm -f "$f" && echo "removed $f"
+        done
     elif [[ -e $conf ]]; then
         echo "kept $conf (uninstall --purge removes it)"
     fi
