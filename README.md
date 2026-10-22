@@ -1,8 +1,9 @@
 # php_site_watch
 
 `php-site-watch` checks an Apache or nginx + PHP server for signs of exploitation or trouble. It
-can mail an alert as soon as something new shows up, and a status report every morning that also
-covers basic server health.
+can mail an alert within the hour when something new shows up, and a status report every morning
+that also covers basic server health. Each scheduled run is logged, and the latest reports can be
+read on the server at any time.
 
 It was written after the PHP2Shell vulnerabilities
 ([CVE-2026-109618](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w),
@@ -38,7 +39,8 @@ containers are running.
 - Linux, run as root (to read the logs and see every process and socket)
 - `perl` with no extra modules (tested with Perl 5.26 and 5.32), plus `ps`, `ss` and `find`.
   On RHEL, Rocky or Oracle Linux: `dnf install perl-interpreter procps-ng iproute findutils git`
-- For mail: a local `sendmail`, such as postfix configured to send outgoing mail, and cron
+- For the scheduled runs: cron (`cronie`), a local `sendmail` such as postfix configured to send
+  outgoing mail, and `logrotate` for the run log
 
 Tested on Rocky Linux 8.10 and 9.8, including a live Apache 2.4.37 + php-fpm 7.4.33 setup
 delivering through postfix. It reads php-fpm, PHP, Apache and nginx log formats, including
@@ -54,9 +56,16 @@ sudo ./setup.sh install --cron --mailto you@example.org
 
 This installs `/usr/local/sbin/php-site-watch` (use the full path with `sudo`: on RHEL and
 similar systems its safe PATH leaves out `/usr/local/sbin`), a fully commented
-`/etc/php-site-watch.conf` (only if there isn't one yet), and `/etc/cron.d/php-site-watch` with
-two jobs that mail to the recipients in the config. `--mailto` adds recipients there
-(comma-separated); with none, cron mails the reports to root instead.
+`/etc/php-site-watch.conf` (only if there isn't one yet), a logrotate entry for the run log, and
+`/etc/cron.d/php-site-watch` with two jobs that mail to the recipients in the config. `--mailto`
+adds recipients there (comma-separated); with none, cron mails the reports to root instead.
+
+On an UltraScan LIMS server, start from the example configuration, which allows what the LIMS
+normally does as `us3`:
+
+```bash
+sudo cp examples/us3lims.conf /etc/php-site-watch.conf
+```
 
 - **alerts**, hourly at 5 past: findings from today and yesterday that haven't been reported
   before. Nothing is sent when there is nothing new. Each finding is mailed once; the list of
@@ -146,10 +155,14 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 | `--mail-to ADDRESSES` | with `--alert` or `--status`, mail instead of printing (comma-separated; replaces the config's recipients) |
 | `--mail-from ADDRESS` | sender address for mail |
 | `--last` | print the recent scheduled runs and their latest saved reports, without checking |
+| `--log-file FILE` | run log for `--alert` and `--status` (default: `/var/log/php-site-watch.log`; `none` turns it off) |
+| `--state-dir DIR` | alert history and saved reports (default: `/var/lib/php-site-watch`) |
+| `--sendmail PATH` | program that sends the mail (default: `/usr/sbin/sendmail`) |
 | `--version` | print the version |
 
-The PHP fatal error, 5xx, POST and health sections are for context and don't count as findings. The files,
-processes, sockets and health sections show the current state, whatever `--date` is.
+The PHP fatal error, 5xx, POST and health sections are for context and don't count as
+findings. The files, processes, sockets and health sections show the current state, whatever
+`--date` is.
 
 ## Reading the results
 
@@ -171,13 +184,22 @@ processes, sockets and health sections show the current state, whatever `--date`
 works with `:8` and `:9`):
 
 ```bash
-# sample logs, planted files, processes and sockets, and mail through a stand-in sendmail
-# (SYS_PTRACE lets container root see socket owners, as real root can)
+# sample logs, planted files, processes and sockets, mail through a stand-in sendmail,
+# the run log and --last (SYS_PTRACE lets container root see socket owners, as real root can)
 podman run --rm -q --cap-add SYS_PTRACE -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:9 bash /t/test-run.sh
 # real Apache + php-fpm 7.4 and postfix: crashed workers, out-of-memory, PHP2Shell fix check
 podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:8 bash /t/test-el8-live.sh
-# setup.sh install, cron jobs and uninstall
+# setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate, uninstall
 podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh
 ```
+
+## Versions
+
+- **1.5.0:** run log `/var/log/php-site-watch.log`, saved latest status and alert reports, `--last`
+- **1.4.1:** fix moving addresses off old cron jobs that have no `--mail-from`
+- **1.4.0:** recipients kept in the config; `setup.sh mail list|add|remove|from|test`
+- **1.3.0:** container processes left out; zombie processes summarized; `examples/us3lims.conf`
+- **1.2.0:** only real FastCGI failures count; PHP fatal errors listed for context
+- **1.1.0:** first published version: hourly alerts, daily status with server health, `setup.sh`
