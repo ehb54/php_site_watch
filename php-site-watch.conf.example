@@ -1,0 +1,33 @@
+# /etc/php-site-watch.conf: settings for php-site-watch on this server.
+# One "key = value" per line; # starts a comment. Command-line options override these.
+# fpm-logs, web-logs, scan, exclude, allow-proc and allow-peer may be given more than once.
+
+# Account PHP runs as. If unset, it is detected from the running php-fpm or Apache workers.
+# user = apache
+
+# How far back to look for files changed by that account, in hours (default 24).
+# hours = 24
+
+# Log locations, if not in the usual places (/var/log/php-fpm, /var/opt/remi/php*/log/php-fpm,
+# /var/log/php*-fpm.log, /var/log/httpd, /var/log/apache2, /var/log/nginx).
+# fpm-logs = /var/opt/remi/php74/log/php-fpm
+# web-logs = /srv/www/logs
+
+# Where to look for files the PHP account changed
+# (default: /srv /var/www /tmp /var/tmp /dev/shm and the account's home directory).
+# scan = /home/web/public_html
+
+# Changed files that are expected here, as Perl regular expressions.
+# exclude = ^/srv/trac/[^/]+/(log|db)/
+# exclude = /cache/
+
+# Other processes the PHP account normally runs (Apache, nginx and php-fpm workers are always allowed).
+# allow-proc = ^/usr/bin/python3 /srv/app/worker\.py
+
+# Expected connections to other machines, as host:port (for example a database server).
+# allow-peer = ^10\.0\.0\.5:3306$
+
+# Where --alert and --status mail goes (comma-separated), and the sender address if your relay
+# needs one. setup.sh install --cron puts these on the cron jobs' command lines instead.
+# mail-to = you@example.org
+# mail-from = php-site-watch@example.org

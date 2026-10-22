@@ -1,0 +1,2 @@
+[22-Oct-2026 00:14:05 UTC] PHP Fatal error:  Allowed memory size of 134217728 bytes exhausted (tried to allocate 20480 bytes) in /srv/www/htdocs/index.php on line 3
+[22-Oct-2026 00:14:06 UTC] PHP Warning:  Undefined variable $x in /srv/www/htdocs/index.php on line 9

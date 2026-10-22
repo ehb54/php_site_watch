@@ -1,0 +1,1 @@
+[Thu Oct 22 00:30:00.000001 2026] [core:notice] [pid 100:tid 100] AH00052: child pid 9999 exit signal Segmentation fault (11) -- in an old rotated file, must be skipped

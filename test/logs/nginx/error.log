@@ -1,0 +1,3 @@
+2026/10/22 00:50:00 [error] 12#12: *5 upstream prematurely closed connection while reading response header from upstream, client: 4.4.4.4, server: x, request: "POST / HTTP/1.1", upstream: "fastcgi://unix:/run/php-fpm/www.sock:"
+2026/10/22 00:51:00 [error] 12#12: *6 FastCGI sent in stderr: "PHP message: PHP Fatal error:  Allowed memory size of 8388608 bytes exhausted" while reading response header from upstream, client: 4.4.4.5
+2026/10/21 00:51:00 [error] 12#12: *7 upstream prematurely closed connection, previous day, must be ignored

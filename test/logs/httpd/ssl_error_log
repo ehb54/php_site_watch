@@ -1,0 +1,6 @@
+[Thu Oct 22 00:12:03.111111 2026] [proxy_fcgi:error] [pid 1:tid 2] [client 1.2.3.4:5] AH01067: Failed to read FastCGI header
+[Thu Oct 22 00:12:04.111111 2026] [proxy_fcgi:error] [pid 1:tid 2] [client 9.9.9.9:5] AH01071: Got error 'Primary script unknown'
+[Thu Oct 22 00:16:00.000001 2026] [core:notice] [pid 100:tid 100] AH00052: child pid 4567 exit signal Segmentation fault (11)
+[Thu Oct 22 00:17:00.000001 2026] [php:error] [pid 4568:tid 4568] [client 1.2.3.4:6] PHP Fatal error:  Maximum execution time of 30 seconds exceeded in /srv/www/htdocs/a.php on line 7
+[Wed Oct 21 23:00:00.111111 2026] [proxy_fcgi:error] [pid 1:tid 2] [client 8.8.8.8:5] AH01067: Failed to read FastCGI header
+[Thu Oct 22 00:18:00 2025] [proxy_fcgi:error] [pid 1:tid 2] [client 8.8.4.4:5] AH01067: same day last year, must be ignored
