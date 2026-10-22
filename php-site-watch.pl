@@ -35,7 +35,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.2.0';
+our $VERSION = '1.3.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -138,6 +138,8 @@ if (defined $opt{'mail-from'}) {
 }
 
 my $host = hostname();
+my $my_container = container_of('self');    # '' unless this script itself runs in a container
+my %other_container;                         # cache for in_other_container()
 my @warn;
 push @warn, 'not running as root: some logs, processes and sockets may be invisible' if $> != 0;
 
@@ -209,11 +211,15 @@ if (@scan) {
 @changed = map { clean(scalar(localtime((stat $_)[9] // 0)) . "  $_") }
            sort { ((stat $b)[9] // 0) <=> ((stat $a)[9] // 0) } @changed;
 
-my (%userpid, @procs);
-if (my $fh = quiet_open('ps', '-u', $user, '-o', 'pid=,lstart=,args=')) {
+# Processes in containers can run as the same user ID but belong to someone else's setup; zombies
+# have already exited and are summarized in the health section instead.
+my (%userpid, @procs, $zombies);
+if (my $fh = quiet_open('ps', '-u', $user, '-o', 'pid=,stat=,lstart=,args=')) {
     while (my $l = <$fh>) {
         chomp $l;
-        my ($pid, $start, $cmd) = $l =~ /^\s*(\d+)\s+(\w{3} \w{3} +\d+ [\d:]+ \d{4})\s+(.*)$/ or next;
+        my ($pid, $stat, $start, $cmd) = $l =~ /^\s*(\d+)\s+(\S+)\s+(\w{3} \w{3} +\d+ [\d:]+ \d{4})\s+(.*)$/ or next;
+        next if in_other_container($pid);
+        if ($stat =~ /^Z/) { $zombies++; next }
         $userpid{$pid} = 1;
         push @procs, clean("$pid  $start  $cmd") unless grep { $cmd =~ $_ } @allow_proc;
     }
@@ -398,8 +404,16 @@ sub health {
     }
     push @lines, 'disk use: ' . join(', ', @use) if @use;
 
-    # the PHP that serves requests: the php-fpm master's binary, or the php command for mod_php setups
-    my ($master) = grep { /php-fpm: master process/ } cmd_lines('ps', '-eo', 'pid=,args=');
+    my %containers;
+    for my $pid (map { /(\d+)/ ? $1 : () } cmd_lines('ps', '-eo', 'pid=')) {
+        my $c = container_of($pid);
+        $containers{$c} = 1 if length $c && $c ne $my_container;
+    }
+    push @lines, scalar(keys %containers) . ' containers running; their processes are left out of this report' if %containers;
+    push @lines, "$user has $zombies zombie (defunct) processes; their parent is not collecting them" if $zombies;
+
+    # the PHP that serves requests: the host's php-fpm master's binary, or the php command for mod_php setups
+    my ($master) = grep { /php-fpm: master process/ && /^\s*(\d+)/ && !in_other_container($1) } cmd_lines('ps', '-eo', 'pid=,args=');
     my $exe = $master && $master =~ /^\s*(\d+)/ ? readlink("/proc/$1/exe") : undef;
     $exe //= (grep { -x } qw(/usr/bin/php /usr/local/bin/php))[0];
     if ($exe) {
@@ -420,11 +434,26 @@ sub health {
     return ({ title => 'Server health (now)', alert => 0, lines => [ (map { "!! $_" } @problems), @lines ] }, @problems);
 }
 
+# A name for the container a process runs in ('' when not in one), taken from its cgroup paths.
+sub container_of {
+    my ($pid) = @_;
+    open my $fh, '<', "/proc/$pid/cgroup" or return '';
+    local $/;
+    my $c = <$fh> // '';
+    return $c =~ m{((?:docker|libpod|crio|cri-containerd|containerd)[-/:]?[0-9a-f]{12,64}|kubepods[^\s:]*|/lxc/[^/\s]+|machine\.slice/[^/\s]+)} ? $1 : '';
+}
+
+# True for processes in a container other than the one this script runs in (if any).
+sub in_other_container {
+    my ($pid) = @_;
+    return $other_container{$pid} //= do { my $c = container_of($pid); length $c && $c ne $my_container ? 1 : 0 };
+}
+
 sub detect_user {
     my (%fpm, %web);
-    for my $l (cmd_lines('ps', '-eo', 'user:32=,comm=')) {
-        my ($u, $c) = $l =~ /^\s*(\S+)\s+(.*?)\s*$/ or next;
-        next if $u eq 'root';
+    for my $l (cmd_lines('ps', '-eo', 'pid=,user:32=,comm=')) {
+        my ($pid, $u, $c) = $l =~ /^\s*(\d+)\s+(\S+)\s+(.*?)\s*$/ or next;
+        next if $u eq 'root' || in_other_container($pid);
         if    ($c =~ /^php-fpm/)                         { $fpm{$u}++ }
         elsif ($c =~ /^(?:httpd|apache2|lsphp|php-cgi)/) { $web{$u}++ }
     }

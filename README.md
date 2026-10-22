@@ -26,7 +26,12 @@ It reports:
   listening backdoor or an outbound connection
 - server health: uptime and load, whether the web server and php-fpm services are running,
   local disks over 90% full, the PHP version and, on RPM systems, whether its package includes
-  the PHP2Shell fix, and whether php-fpm is still running a binary an update replaced
+  the PHP2Shell fix, whether php-fpm is still running a binary an update replaced, and zombie
+  processes of the PHP account
+
+Processes in containers (Docker, Podman, Kubernetes, LXC) are left out: they can run under the
+same user ID as the host's PHP but belong to their own setups. The health section notes how many
+containers are running.
 
 ## Requirements
 
@@ -88,7 +93,8 @@ sudo /usr/local/sbin/php-site-watch --status --mail-to you@example.org   # mail 
 Exit status: 0 nothing suspicious, 1 findings, 2 usage or setup error.
 
 Options (all but `--quiet`, `--alert`, `--status` and `--version` can also be set in
-`/etc/php-site-watch.conf`; see [php-site-watch.conf.example](php-site-watch.conf.example)):
+`/etc/php-site-watch.conf`; see [php-site-watch.conf.example](php-site-watch.conf.example), and
+[examples/us3lims.conf](examples/us3lims.conf) for an UltraScan LIMS server):
 
 | Option | Meaning |
 |---|---|
