@@ -155,8 +155,9 @@ do_mail() {
 migrate_cron() {
     [[ -e $cron ]] && grep -q -- '--mail-\(to\|from\) ' "$cron" || return 0
     local to from
-    to=$(grep -o -- '--mail-to [^ ]*' "$cron" | head -1 | cut -d' ' -f2)
-    from=$(grep -o -- '--mail-from [^ ]*' "$cron" | head -1 | cut -d' ' -f2)
+    # sed rather than grep: a missing option must not fail the pipeline under pipefail
+    to=$(sed -n 's/.* --mail-to \([^ ]*\).*/\1/p' "$cron" | head -1)
+    from=$(sed -n 's/.* --mail-from \([^ ]*\).*/\1/p' "$cron" | head -1)
     [[ -n $to ]] && mail_add ${to//,/ } > /dev/null
     [[ -n $from ]] && mail_from "$from" > /dev/null
     sed -i -E 's/ --mail-(to|from) [^ ]+//g' "$cron"

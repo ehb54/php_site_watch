@@ -36,7 +36,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.4.0';
+our $VERSION = '1.4.1';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';

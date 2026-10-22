@@ -86,6 +86,20 @@ cat $c
 check 'old cron addresses moved into the config' 'grep -q "moved the report addresses" /tmp/migrate.txt && grep -q "^mail-to = old1@example.org$" $conf && grep -q "^mail-to = old2@example.org$" $conf && grep -q "^mail-from = oldfrom@example.org$" $conf'
 check 'old cron jobs keep their schedule, lose the addresses' 'grep -q "^5 \* \* \* \* root /usr/local/sbin/php-site-watch --alert$" $c && grep -q "^30 6 \* \* \* root /usr/local/sbin/php-site-watch --status --date yesterday$" $c && grep -q "^MAILTO=old1@example.org,old2@example.org$" $c'
 
+# the real installs had --mail-to only, no --mail-from
+./setup.sh mail remove old1@example.org old2@example.org > /dev/null
+./setup.sh mail from none > /dev/null
+cat > $c <<'EOF'
+# php-site-watch (installed by setup.sh)
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=only@example.org
+5 * * * * root /usr/local/sbin/php-site-watch --alert --mail-to only@example.org
+0 7 * * * root /usr/local/sbin/php-site-watch --status --date yesterday --mail-to only@example.org
+EOF
+./setup.sh install > /tmp/migrate2.txt; rc=$?
+cat /tmp/migrate2.txt
+check 'migration works without --mail-from' '((rc == 0)) && grep -q "^mail-to = only@example.org$" $conf && ! grep -q "^mail-from" $conf && ! grep -q -- "--mail-to" $c && grep -q "reports go to: only@example.org" /tmp/migrate2.txt'
+
 ./setup.sh install > /tmp/again.txt
 check 'reinstall without --cron keeps the cron job' 'grep -q "kept $c" /tmp/again.txt && [[ -e $c ]]'
 
