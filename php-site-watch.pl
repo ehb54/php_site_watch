@@ -17,7 +17,9 @@
 #   --user NAME          account PHP runs as (default: detected from running workers)
 #   --fpm-logs PATH      php-fpm log directory or file (repeatable)
 #   --web-logs PATH      Apache or nginx log directory or file (repeatable)
-#   --scan DIR           where to look for files changed by the PHP account (repeatable)
+#   --scan DIR           where to look for files changed by the PHP account (repeatable; default:
+#                        what the web server serves, the directories PHP is set to use, the
+#                        account's home and the temporary directories)
 #   --exclude REGEX      changed files to ignore (repeatable)
 #   --allow-proc REGEX   other expected processes of the PHP account (repeatable)
 #   --allow-peer REGEX   expected network peers as host:port, e.g. a remote database (repeatable)
@@ -41,7 +43,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.6.0';
+our $VERSION = '1.7.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -177,8 +179,7 @@ my @fpm_paths = @{ $list{'fpm-logs'} } ? @{ $list{'fpm-logs'} }
               : grep { -e } ('/var/log/php-fpm', glob('/var/opt/remi/php*/log/php-fpm'), glob('/var/log/php*-fpm.log*'));
 my @web_paths = @{ $list{'web-logs'} } ? @{ $list{'web-logs'} }
               : grep { -d } qw(/var/log/httpd /var/log/httpd24 /var/log/apache2 /var/log/nginx);
-my @scan = @{ $list{scan} } ? @{ $list{scan} }
-         : grep { -d } ('/srv', '/var/www', '/tmp', '/var/tmp', '/dev/shm', (defined $home && $home ne '/' ? $home : ()));
+my @scan = @{ $list{scan} } ? @{ $list{scan} } : default_scan();
 
 # --- logs ---------------------------------------------------------------------------------------
 
@@ -215,8 +216,9 @@ push @warn, 'no log files found for ' . join(' or ', @days) unless $read;
 
 # --- files, processes, sockets of the PHP account ---------------------------------------------
 
-my @changed;
+my (@changed, $scan_secs);
 if (@scan) {
+    my $start = time;
     my $fh = quiet_open('find', @scan, '-xdev', '-type', 'f', '-user', $user, '-mmin', '-' . int($hours * 60), '-print0');
     if ($fh) {
         local $/ = "\0";
@@ -225,6 +227,7 @@ if (@scan) {
             push @changed, $f unless grep { $f =~ $_ } @exclude;
         }
         close $fh;
+        $scan_secs = time - $start;
     } else {
         push @warn, cannot_run('find', 'changed files');
     }
@@ -497,6 +500,10 @@ sub health {
     }
     push @lines, scalar(keys %containers) . ' containers running; their processes are left out of this report' if %containers;
     push @lines, "$user has $zombies zombie (defunct) processes; their parent is not collecting them" if $zombies;
+    if (defined $scan_secs) {
+        push @lines, "changed files looked for in: " . join(', ', @scan) . " ($scan_secs s)";
+        push @problems, sprintf('the changed-file scan took %d min; list fewer scan directories', $scan_secs / 60) if $scan_secs >= 900;
+    }
 
     # the PHP that serves requests: the host's php-fpm master's binary, or the php command for mod_php setups
     my ($master) = grep { /php-fpm: master process/ && /^\s*(\d+)/ && !in_other_container($1) } cmd_lines('ps', '-eo', 'pid=,args=');
@@ -564,6 +571,67 @@ sub detect_user {
         return $u if defined $u;
     }
     return;
+}
+
+# Where to look for files the PHP account changed: what the web server serves (the document roots
+# and aliases in the Apache and nginx configuration), the directories PHP is set to use (php-fpm
+# pool chdir, open_basedir, upload and temporary directories), the account's home and the shared
+# temporary directories. Not all of /srv or /home: on a big server those also hold backups, data
+# and other users' homes, and walking them every hour takes long on spinning disks.
+sub default_scan {
+    my @dirs = ('/var/www', '/tmp', '/var/tmp', '/dev/shm', (defined $home ? $home : ()));
+    for my $l (conf_lines('/etc/httpd/conf/httpd.conf', '/etc/httpd'), conf_lines('/etc/apache2/apache2.conf', '/etc/apache2'),
+               conf_lines('/opt/rh/httpd24/root/etc/httpd/conf/httpd.conf', '/opt/rh/httpd24/root/etc/httpd')) {
+        push @dirs, $1 if $l =~ /^\s*(?:DocumentRoot|(?:Script)?Alias\s+\S+)\s+"?([^"\s]+)/i;
+    }
+    for my $l (conf_lines('/etc/nginx/nginx.conf', '/etc/nginx')) {
+        push @dirs, $1 while $l =~ /(?:^|[\s{;])(?:root|alias)\s+"?([^"\s;]+)"?\s*;/g;
+    }
+    for my $f (map { glob } qw(/etc/php.ini /etc/php.d/*.ini /etc/php-fpm.d/*.conf /etc/php/*/*/php.ini /etc/php/*/*/conf.d/*.ini
+                               /etc/php/*/fpm/pool.d/*.conf /etc/opt/remi/php*/php.ini /etc/opt/remi/php*/php.d/*.ini
+                               /etc/opt/remi/php*/php-fpm.d/*.conf)) {
+        open my $fh, '<', $f or next;
+        while (my $l = <$fh>) {
+            next if $l =~ /^\s*[;#]/;
+            if ($l =~ /^\s*chdir\s*=\s*(\S+)/) {
+                push @dirs, $1;
+            } elsif ($l =~ /^\s*(?:php_(?:admin_)?value\[)?(?:open_basedir|upload_tmp_dir|sys_temp_dir)\]?\s*=\s*"?([^";\n]*)/) {
+                push @dirs, split /:/, $1;
+            }
+        }
+        close $fh;
+    }
+    my (%seen, @roots);
+    for my $d (@dirs) {
+        $d =~ s/\s+$//;
+        next if $d !~ m{^/} || $d =~ /[\$%{]/ || !-d $d;    # relative, or a variable we can't expand
+        my $r = cmd_out('readlink', '-f', $d);
+        push @roots, $r if defined $r && $r ne '/' && !$seen{$r}++;
+    }
+    # a directory inside another one is walked with it, unless it is on another filesystem (find -xdev)
+    my %dev  = map { $_ => (stat $_)[0] } @roots;
+    my @keep = grep { my $d = $_; !grep { $_ ne $d && index($d, "$_/") == 0 && $dev{$_} == $dev{$d} } @roots } @roots;
+    return sort @keep;
+}
+
+# The lines of a web server configuration file and of the files it includes, comments left out.
+sub conf_lines {
+    my ($file, $root, $depth) = @_;
+    return if ($depth //= 0) > 8;
+    open my $fh, '<', $file or return;
+    my @lines;
+    while (my $l = <$fh>) {
+        next if $l =~ /^\s*#/;
+        if ($l =~ /^\s*include(?:optional)?\s+"?([^"\s;]+)/i) {
+            my $inc = $1;
+            $inc = "$root/$inc" unless $inc =~ m{^/};
+            push @lines, map { conf_lines($_, $root, $depth + 1) } map { -d $_ ? sort { $a cmp $b } glob("$_/*") : $_ } glob $inc;
+            next;
+        }
+        push @lines, $l;
+    }
+    close $fh;
+    return @lines;
 }
 
 sub log_files {

@@ -13,8 +13,9 @@
 # fpm-logs = /var/opt/remi/php74/log/php-fpm
 # web-logs = /srv/www/logs
 
-# Where to look for files the PHP account changed
-# (default: /srv /var/www /tmp /var/tmp /dev/shm and the account's home directory).
+# Where to look for files the PHP account changed. By default: the web server's document roots
+# and aliases, the directories PHP is set to use, the account's home, and /tmp, /var/tmp, /dev/shm
+# and /var/www. scan lines replace that list.
 # scan = /home/web/public_html
 
 # Changed files that are expected here, as Perl regular expressions.

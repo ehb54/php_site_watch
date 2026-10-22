@@ -149,7 +149,7 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 | `--user NAME` | account PHP runs as (default: detected from running workers) |
 | `--fpm-logs PATH` | php-fpm log directory or file (repeatable) |
 | `--web-logs PATH` | Apache or nginx log directory or file (repeatable) |
-| `--scan DIR` | where to look for changed files (repeatable) |
+| `--scan DIR` | where to look for changed files (repeatable; replaces the default directories below) |
 | `--exclude REGEX` | changed files to ignore (repeatable) |
 | `--allow-proc REGEX` | other expected processes of the PHP account (repeatable) |
 | `--allow-peer REGEX` | expected connections to other machines, as host:port (repeatable) |
@@ -168,6 +168,17 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 The PHP fatal error, 5xx, POST and health sections are for context and don't count as
 findings. The files, processes, sockets and health sections show the current state, whatever
 `--date` is.
+
+Without `scan` lines, it looks for changed files where the PHP account's files matter:
+- the document roots and aliases in the Apache and nginx configuration;
+- the directories PHP is set to use: php-fpm `chdir`, `open_basedir`, and the upload and temporary directories;
+- the account's home, following a link to where it really is;
+- `/tmp`, `/var/tmp`, `/dev/shm` and `/var/www`.
+
+The health section of the report lists these directories and how long the scan took. Before 1.7.0
+it walked all of `/srv`. On some servers that also holds backups, data and other users' homes, and
+walking it took a long time on spinning disks. If the scan is still slow, list the directories
+yourself with `scan` lines.
 
 ## Reading the results
 
@@ -293,6 +304,8 @@ bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 
 ## Versions
 
+- **1.7.0:** the changed-file scan takes its directories from the web server and PHP configuration
+  instead of walking all of `/srv`; the health section shows where it looked and how long it took
 - **1.6.0:** Debian and Ubuntu: PHP2Shell fix check through dpkg; in containers: the disk line
   shows the host disk under `/` instead of mounted files such as `/etc/hosts`, and a warning when
   the PHP account's sockets can't be seen; plain warnings for a missing `ss`, `ps` or `find`;

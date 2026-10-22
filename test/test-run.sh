@@ -8,7 +8,8 @@
 #       quay.io/rockylinux/rockylinux:9 bash /t/test-run.sh        (or :8)
 set -u
 dnf -y -q install perl-interpreter procps-ng iproute findutils gzip nmap-ncat > /dev/null 2>&1 || exit 9
-useradd -m websvc
+# the PHP account's home is a link into /srv, as on servers that keep homes there
+mkdir -p /srv/users && useradd -m -d /srv/users/websvc websvc && ln -s /srv/users/websvc /home/websvc
 runas() { perl -e 'my @p = getpwnam(shift); $( = $p[3]; $) = "$p[3] $p[3]"; $< = $> = $p[2]; exec @ARGV or die "exec: $!"' websvc "$@"; }
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
@@ -28,10 +29,19 @@ gz=/logs/httpd/access_log-20261023.gz
 gzip -dc $gz | sed "s#22/Oct/2026#$(date +%d/%b/%Y)#g" | gzip -c > $gz.new && mv $gz.new $gz
 touch -d '30 days ago' /logs/httpd/error_log-20261001    # a rotated file too old to matter
 
+# what the web server serves and PHP uses, for the default scan; /srv/backup is neither
+mkdir -p /etc/httpd/conf /etc/httpd/conf.d /etc/nginx/conf.d /etc/php-fpm.d /srv/www/htdocs/docs /srv/nginx/site \
+         /srv/nginx/files /srv/uploads /srv/backup
+printf 'ServerRoot "/etc/httpd"\nDocumentRoot "/srv/www/htdocs"\nIncludeOptional conf.d/*.conf\n' > /etc/httpd/conf/httpd.conf
+printf 'Alias /trac "/srv/trac"\nAlias /docs /srv/www/htdocs/docs\n# Alias /old /srv/backup\n' > /etc/httpd/conf.d/apps.conf
+printf 'http {\n    include conf.d/*.conf;\n}\n' > /etc/nginx/nginx.conf
+printf 'server { listen 8080; root /srv/nginx/site; location /files/ { alias /srv/nginx/files/; } }\n' > /etc/nginx/conf.d/site.conf
+printf '[www]\nuser = websvc\nphp_admin_value[upload_tmp_dir] = /srv/uploads\n' > /etc/php-fpm.d/www.conf
 mkdir -p /srv/www/htdocs /srv/trac/proj/log /var/lib/php/session
 chown -R websvc /srv /var/lib/php/session
 runas touch /srv/www/htdocs/shell.php /srv/trac/proj/log/trac.log /home/websvc/.uslims_backup_stats \
             /var/lib/php/session/sess_abc123 /tmp/x.bin
+runas touch /srv/nginx/site/n.php /srv/nginx/files/f.txt /srv/uploads/phpAbc123 /srv/backup/dump.php
 runas touch -d '3 days ago' /srv/www/htdocs/old.php
 
 ip=$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
@@ -53,6 +63,7 @@ check 'crashes, out-of-memory and FastCGI errors found' 'grep -q "child 502 exit
 check 'noise, other days and old rotated files left out' '! grep -qE "SIGTERM|AH01071|child 400|8\.8\.8\.8|8\.8\.4\.4|child pid 9999|previous day" /tmp/r1.txt'
 check '5xx and POST counts, including the rotated .gz log' 'grep -qE "^ +2  1\.2\.3\.4 POST / 503$" /tmp/r1.txt && grep -q "9.8.7.6 POST /upload.php 502" /tmp/r1.txt && grep -qE "^ +2  9\.8\.7\.6$" /tmp/r1.txt'
 check 'planted files found, expected ones left out' 'grep -q shell.php /tmp/r1.txt && grep -q /tmp/x.bin /tmp/r1.txt && ! grep -qE "trac\.log|uslims_backup_stats|sess_abc123|old\.php" /tmp/r1.txt'
+check 'default scan: web roots, aliases, PHP upload dir, real home; not /srv/backup' 'grep -qE "^changed files looked for in: /dev/shm, /srv/nginx/files, /srv/nginx/site, /srv/trac, /srv/uploads, /srv/users/websvc, /srv/www/htdocs, /tmp, /var/tmp \([0-9]+ s\)\$" /tmp/r1.txt && grep -q /srv/nginx/site/n.php /tmp/r1.txt && grep -q /srv/nginx/files/f.txt /tmp/r1.txt && grep -q /srv/uploads/phpAbc123 /tmp/r1.txt && ! grep -q dump.php /tmp/r1.txt'
 check 'planted processes found, PHP worker allowed' 'grep -q "ncat -lk 0.0.0.0 4444" /tmp/r1.txt && ! grep -q "php-fpm: pool www" /tmp/r1.txt'
 check 'PHP notices and warnings are not FastCGI failures' '! grep -qE "Content-type not specified|Undefined variable" /tmp/r1.txt'
 check 'application fatal errors grouped for context' 'grep -qE "^ +2  Uncaught Error: Undefined constant \"d\" in /srv/www/htdocs/somo/pubs.php:79$" /tmp/r1.txt'
@@ -106,7 +117,7 @@ check '--alert with --date rejected' '((rc == 2))'
 
 echo; echo "######## 4: --quiet on a clean day after removing the planted files and processes"
 { pkill -u websvc; kill $(jobs -p); wait; } 2> /dev/null    # every helper, including the root ncat listener
-rm -f /srv/www/htdocs/shell.php /srv/www/htdocs/another.php /tmp/x.bin
+rm -f /srv/www/htdocs/shell.php /srv/www/htdocs/another.php /tmp/x.bin /srv/nginx/site/n.php /srv/nginx/files/f.txt /srv/uploads/phpAbc123
 perl /s/php-site-watch.pl --quiet --config /t/test.conf --date "$(date -d '3 days ago' +%F)" "${logs[@]}" > /tmp/r4.txt; rc=$?
 check 'clean day: no output, exit 0' '[[ ! -s /tmp/r4.txt ]] && ((rc == 0))' || cat /tmp/r4.txt
 
