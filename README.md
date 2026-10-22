@@ -144,7 +144,7 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 | `--user NAME` | account PHP runs as (default: detected from running workers) |
 | `--fpm-logs PATH` | php-fpm log directory or file (repeatable) |
 | `--web-logs PATH` | Apache or nginx log directory or file (repeatable) |
-| `--scan DIR` | where to look for changed files (repeatable) |
+| `--scan DIR` | where to look for changed files (repeatable; replaces the default directories below) |
 | `--exclude REGEX` | changed files to ignore (repeatable) |
 | `--allow-proc REGEX` | other expected processes of the PHP account (repeatable) |
 | `--allow-peer REGEX` | expected connections to other machines, as host:port (repeatable) |
@@ -163,6 +163,17 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 The PHP fatal error, 5xx, POST and health sections are for context and don't count as
 findings. The files, processes, sockets and health sections show the current state, whatever
 `--date` is.
+
+Without `scan` lines, it looks for changed files where the PHP account's files matter:
+- the document roots and aliases in the Apache and nginx configuration;
+- the directories PHP is set to use: php-fpm `chdir`, `open_basedir`, and the upload and temporary directories;
+- the account's home, following a link to where it really is;
+- `/tmp`, `/var/tmp`, `/dev/shm` and `/var/www`.
+
+The health section of the report lists these directories and how long the scan took. Before 1.7.0
+it walked all of `/srv`. On some servers that also holds backups, data and other users' homes, and
+walking it took a long time on spinning disks. If the scan is still slow, list the directories
+yourself with `scan` lines.
 
 ## Reading the results
 
@@ -197,6 +208,8 @@ podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/tes
 
 ## Versions
 
+- **1.7.0:** the changed-file scan takes its directories from the web server and PHP configuration
+  instead of walking all of `/srv`; the health section shows where it looked and how long it took
 - **1.5.0:** run log `/var/log/php-site-watch.log`, saved latest status and alert reports, `--last`
 - **1.4.1:** fix moving addresses off old cron jobs that have no `--mail-from`
 - **1.4.0:** recipients kept in the config; `setup.sh mail list|add|remove|from|test`
