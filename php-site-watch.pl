@@ -517,6 +517,18 @@ sub health {
             }
         }
     }
+    # mod_php: Apache keeps running the PHP module it started with after an update replaced the file,
+    # through graceful restarts too, until it is stopped and started. In containers, package updates
+    # don't even restart it.
+    my %stale;
+    for (cmd_lines('ps', '-eo', 'pid=,comm=')) {
+        my ($pid, $comm) = /^\s*(\d+)\s+(httpd|apache2)\s*$/ or next;
+        next if $stale{$comm} || in_other_container($pid) || !open(my $fh, '<', "/proc/$pid/maps");
+        my %php = map { m{/libphp[^/\s]*\.so( \(deleted\))?$} ? (($1 ? 'old' : 'current') => 1) : () } <$fh>;
+        $stale{$comm} = 1 if $php{old} && !$php{current};
+    }
+    push @problems, "$_ still runs a PHP module an update replaced; stop and start it (a graceful restart keeps the old one)"
+        for sort keys %stale;
     # Debian and Ubuntu: the packages of a PHP version (phpX.Y-cli, libapache2-mod-phpX.Y, phpX.Y-fpm)
     # are built together, and phpX.Y-common carries their changelog, unless the system leaves all
     # documentation out (as Debian's slim images do; Ubuntu's keep changelogs).

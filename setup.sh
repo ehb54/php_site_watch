@@ -44,7 +44,10 @@ check_tools() {
     for t in perl ps ss find; do
         command -v "$t" > /dev/null || missing+=("$t")
     done
-    if ((${#missing[@]})); then
+    ((${#missing[@]})) || return 0
+    if command -v apt-get > /dev/null; then
+        echo "setup: warning: missing ${missing[*]}; on Debian or Ubuntu: apt-get install procps iproute2" >&2
+    else
         echo "setup: warning: missing ${missing[*]}; on RHEL, Rocky or Oracle Linux: dnf install perl-interpreter procps-ng iproute findutils" >&2
     fi
 }
@@ -187,7 +190,9 @@ do_install() {
     done
     [[ -z $mailfrom || $mailfrom =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || die "--mailfrom: not a mail address: $mailfrom"
     if ((want_cron)); then
-        [[ -d /etc/cron.d ]] || die "/etc/cron.d is missing; install cron first (dnf install cronie)"
+        # other packages can create /etc/cron.d without installing cron itself
+        [[ -d /etc/cron.d ]] && { command -v crond || command -v cron; } > /dev/null \
+            || die "cron is not installed; install cron first (dnf install cronie, or apt-get install cron)"
         [[ -x /usr/sbin/sendmail ]] || echo "setup: warning: /usr/sbin/sendmail is missing; install and configure postfix so the reports can be mailed" >&2
     fi
     check_tools

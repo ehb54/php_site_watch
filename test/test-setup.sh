@@ -1,15 +1,28 @@
 #!/bin/bash
-# Exercise setup.sh install / mail / uninstall in a throwaway Rocky container. From the repository directory:
-#   podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh   (or :8)
+# Exercise setup.sh install / mail / uninstall in a throwaway Rocky, Ubuntu or Debian container. From
+# the repository directory (or with rockylinux:8, docker.io/library/ubuntu:22.04, debian:12-slim, ...):
+#   podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh
 set -u
-dnf -y -q install perl-interpreter procps-ng iproute findutils logrotate > /dev/null 2>&1 || exit 9
+if command -v dnf > /dev/null; then
+    dnf -y -q install perl-interpreter procps-ng iproute findutils logrotate > /dev/null 2>&1 || exit 9
+    get_cron() { dnf -y -q install cronie > /dev/null 2>&1; }
+    hint='on RHEL, Rocky or Oracle Linux: dnf install perl-interpreter procps-ng iproute findutils'
+else
+    export DEBIAN_FRONTEND=noninteractive
+    { apt-get -q update && apt-get -y -q install procps iproute2 logrotate; } > /dev/null 2>&1 || exit 9
+    get_cron() { apt-get -y -q install cron > /dev/null 2>&1; }
+    hint='on Debian or Ubuntu: apt-get install procps iproute2'
+fi
 cp -r /s /repo && cd /repo
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
 c=/etc/cron.d/php-site-watch
 conf=/etc/php-site-watch.conf
 
-./setup.sh install
+ss=$(command -v ss) && mv "$ss" "$ss.hidden"    # a missing tool, for the install hint
+./setup.sh install 2> /tmp/inst0.txt
+mv "$ss.hidden" "$ss"
+check 'a missing tool is named, with how to install it' 'grep -qxF "setup: warning: missing ss; $hint" /tmp/inst0.txt'
 check 'script installed and runs' '[[ -x /usr/local/sbin/php-site-watch ]] && php-site-watch --version | grep -q "^php-site-watch "'
 check 'commented config installed' '[[ -f $conf ]] && ! grep -qv "^\s*\(#\|$\)" $conf'
 check 'no cron job without --cron' '[[ ! -e $c ]]'
@@ -17,9 +30,14 @@ check 'logrotate entry installed and valid' '[[ -f /etc/logrotate.d/php-site-wat
 php-site-watch --user nobody --scan /nonexistent > /tmp/run.txt; rc=$?
 check 'runs with the installed config (exit 0 or 1)' '((rc <= 1)) && grep -q "^php-site-watch " /tmp/run.txt'
 
+# no cron yet (on Debian and Ubuntu, logrotate brings it along), but /etc/cron.d, which other
+# packages create too, such as e2fsprogs on Debian and Ubuntu
+crond=$(command -v crond || command -v cron) && mv "$crond" "$crond.hidden"
+mkdir -p /etc/cron.d
 ./setup.sh install --cron > /tmp/nocron.txt 2>&1; rc=$?
-check '--cron without cron installed fails clearly' '((rc == 1)) && grep -q "install cron first" /tmp/nocron.txt'
-dnf -y -q install cronie > /dev/null 2>&1
+[[ -n $crond ]] && mv "$crond.hidden" "$crond"
+check '--cron without cron installed fails clearly' '((rc == 1)) && grep -q "install cron first" /tmp/nocron.txt && [[ ! -e $c ]]'
+get_cron
 ./setup.sh install --cron --mailto 'x@y; reboot' > /dev/null 2>&1; rc=$?
 check 'malformed --mailto rejected' '((rc == 1)) && [[ ! -e $c ]]'
 
