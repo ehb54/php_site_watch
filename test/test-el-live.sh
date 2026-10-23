@@ -5,7 +5,8 @@
 # backport on 8 and 9, as PHP 8.3.36 itself on 10) and flags php-fpm still running the replaced
 # binary, and that --status and --alert mail is delivered by postfix. From the repository directory:
 #   podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:10 bash /t/test-el-live.sh
-# (or :8 or :9)
+# (or :8 or :9). With -e PSW_VAULT=1 it takes the build to update from out of the previous minor
+# release's vault, as it does by itself once no build without the fix is left in the repositories.
 set -u
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
@@ -14,17 +15,31 @@ el=${VERSION_ID%%.*}
 
 # use Rocky's main server rather than a mirror that may lag behind the latest fixes
 sed -i -e 's/^mirrorlist=/#mirrorlist=/' -e 's/^#baseurl=/baseurl=/' /etc/yum.repos.d/[Rr]ocky*.repo
-# start from the last build without the PHP2Shell fix, to update it later: Rocky 8's php:7.4 stream
-# and Rocky 9's PHP 8.0 got the fix as a backport (7.4.33-8, 8.0.30-8.el9_8.1), Rocky 10 by
-# following PHP's own releases (8.3.36)
+# start from a build without the PHP2Shell fix, to update it later: Rocky 8's php:7.4 stream and
+# Rocky 9's PHP 8.0 got the fix as a backport (7.4.33-8, 8.0.30-8.el9_8.1), Rocky 10 by following
+# PHP's own releases (8.3.36)
 case $el in
-    8) dnf -y -q module enable php:7.4 > /dev/null 2>&1 || exit 9; old_re='^7\.4\.33-6\.' ;;
-    9) old_re='^8\.0\.30-8\.el9_8$' ;;
-    10) old_re='^8\.3\.33-' ;;
+    8) dnf -y -q module enable php:7.4 > /dev/null 2>&1 || exit 9; old_re='^7\.4\.33-[1-6]\.' ;;
+    9) old_re='^8\.0\.30-[0-8]\.el9_[0-9]+$' ;;
+    10) old_re='^8\.3\.(2[0-9]|3[0-5])-' ;;
     *) echo "no test plan for Rocky $el"; exit 9 ;;
 esac
-old=$(dnf -q --showduplicates list php-fpm 2> /dev/null | awk -v re="$old_re" '$2 ~ re {print $2; exit}')
-[[ -n $old ]] || { echo "no php-fpm matching $old_re in the repository"; exit 9; }
+newest_old() { dnf -q --showduplicates "$@" list php-fpm 2> /dev/null | awk -v re="$old_re" '$2 ~ re {v = $2} END {print v}'; }
+# the current repositories first, then the vault of the previous minor release, where Rocky moves
+# a release's repositories when the next one comes out (PSW_VAULT=1 tries only the vault)
+old=
+[[ ${PSW_VAULT:-0} == 1 ]] || old=$(newest_old)
+minor=${VERSION_ID#*.}
+if [[ -z $old ]] && ((minor > 0)); then
+    prev=$el.$((minor - 1))
+    key=$(sed -n 's/^gpgkey=//p' /etc/yum.repos.d/[Rr]ocky*.repo | head -1)
+    printf '%s\n' '[psw-vault]' "name=Rocky Linux $prev AppStream, from the vault" \
+        "baseurl=https://dl.rockylinux.org/vault/rocky/$prev/AppStream/\$basearch/os/" \
+        'gpgcheck=1' "gpgkey=$key" > /etc/yum.repos.d/psw-vault.repo
+    old=$(newest_old --disablerepo='*' --enablerepo=psw-vault)
+    [[ -n $old ]] && echo "using php-fpm $old from the Rocky $prev vault"
+fi
+[[ -n $old ]] || { echo "no php-fpm matching $old_re in the repositories or the vault"; exit 9; }
 dnf -y -q install httpd "php-fpm-$old" "php-common-$old" perl-interpreter procps-ng iproute findutils gzip postfix > /dev/null 2>&1 || exit 9
 rpm -q php-fpm httpd perl-interpreter postfix
 

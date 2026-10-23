@@ -1,0 +1,96 @@
+# Tier 2: the longer tests, every night and on pull requests that change what they cover.
+# - The live suites install real Apache + PHP stacks and update them, so they also catch changes
+#   in the distributions' repositories, such as a new PHP build, or Rocky moving old builds to its
+#   vault. The Rocky one runs a second time taking its old PHP build from the vault.
+# - test-systemd.sh runs site-lockdown under a real systemd, with firewalld on Rocky.
+# A failed scheduled run is mailed to whoever last changed the schedule. GitHub pauses schedules
+# in repositories without activity for 60 days.
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - php-site-watch.pl
+      - site-lockdown.pl
+      - setup.sh
+      - 'systemd/**'
+      - test/test-el-live.sh
+      - test/test-ubuntu-live.sh
+      - test/test-systemd.sh
+      - .github/workflows/nightly.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  live-el:
+    name: test-el-live ${{ matrix.name }}${{ matrix.vault && ' vault' || '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [rocky8, rocky9, rocky10]
+        vault: [false, true]
+        include:
+          - { name: rocky8,  image: quay.io/rockylinux/rockylinux:8 }
+          - { name: rocky9,  image: quay.io/rockylinux/rockylinux:9 }
+          - { name: rocky10, image: quay.io/rockylinux/rockylinux:10 }
+    env:
+      IMAGE: ${{ matrix.image }}
+      PSW_VAULT: ${{ matrix.vault && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker run --rm -e PSW_VAULT -v "$PWD/test:/t:ro" -v "$PWD:/s:ro" "$IMAGE" bash /t/test-el-live.sh
+
+  live-ubuntu:
+    name: test-ubuntu-live ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: ubuntu20.04, image: docker.io/library/ubuntu:20.04 }
+          - { name: ubuntu22.04, image: docker.io/library/ubuntu:22.04 }
+          - { name: ubuntu24.04, image: docker.io/library/ubuntu:24.04 }
+    env:
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker run --rm -v "$PWD:/s:ro" "$IMAGE" bash /s/test/test-ubuntu-live.sh
+
+  systemd:
+    name: test-systemd ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: rocky8,      image: quay.io/rockylinux/rockylinux:8 }
+          - { name: rocky9,      image: quay.io/rockylinux/rockylinux:9 }
+          - { name: rocky10,     image: quay.io/rockylinux/rockylinux:10 }
+          - { name: ubuntu24.04, image: docker.io/library/ubuntu:24.04 }
+    env:
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash test/test-systemd.sh "$IMAGE"

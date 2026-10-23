@@ -395,7 +395,11 @@ and flags any key of the `fleet` user that isn't limited this way.
 
 Every pull request and push to `main` runs the static checks and the container suites below on
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), each on all of its
-images; GitHub keeps every job's full output. The static checks also run anywhere:
+images; GitHub keeps every job's full output. The longer tests run every night, and on pull
+requests that change what they cover ([`.github/workflows/nightly.yml`](.github/workflows/nightly.yml)):
+the live Apache + PHP suites on all their images, the Rocky one a second time with its old PHP
+build from Rocky's vault, and `site-lockdown` under a real systemd. The static checks also run
+anywhere:
 
 ```bash
 # perl syntax (fleet-agent in taint mode), no modules beyond strict and warnings, one version in
@@ -413,7 +417,9 @@ Rocky ones work with `:8`, `:9` and `:10`):
 podman run --rm -q --cap-add SYS_PTRACE -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:9 bash /t/test-run.sh
 # real Apache + php-fpm and postfix (:8, :9 or :10): crashed workers, out-of-memory, the PHP2Shell
-# fix check before and after updating PHP, and php-fpm still running the replaced binary
+# fix check before and after updating PHP, and php-fpm still running the replaced binary. It
+# starts from a PHP build without the fix, from the previous minor release's vault once none is
+# left in the current repositories; -e PSW_VAULT=1 makes it use the vault now
 podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:10 bash /t/test-el-live.sh
 # setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate,
@@ -443,6 +449,11 @@ network):
 # the block seen from another container, allowed addresses, enforce, and fleet-agent over SSH:
 # what a control host may and may not do, its address limit, the health lines, uninstall
 bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/library/ubuntu:20.04
+# site-lockdown under a real systemd, booted in a privileged container with Apache and, on Rocky,
+# firewalld: the units, firewall-cmd --reload, systemctl restart firewalld, the timer, and a
+# restart of the container like a reboot, with another container probing port 80 throughout
+# (Docker only; systemd needs the host's cgroup v2, as on Rocky 9 and 10, Ubuntu 22.04 and later)
+bash test/test-systemd.sh     # Rocky 9; or another image, e.g. docker.io/library/ubuntu:24.04
 ```
 
 ## Versions
