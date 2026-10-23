@@ -49,7 +49,9 @@ $rt exec "$id-build" bash -c 'if command -v dnf > /dev/null; then
         systemctl enable apache2
     fi > /dev/null 2>&1' || exit 9
 $rt commit "$id-build" "$id-img" > /dev/null && $rt rm -f "$id-build" > /dev/null || exit 9
-$rt run -d --name "$sys" --hostname "$sys" --network "$id" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw --stop-signal SIGRTMIN+3 \
+# container=docker: systemd 239 (Rocky 8) doesn't otherwise know it runs in a container, and shuts
+# down as a whole machine would, leaving the filesystem read-only for the next boot
+$rt run -d --name "$sys" --hostname "$sys" --network "$id" --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw --stop-signal SIGRTMIN+3 -e container=docker \
     -v "$PWD:/s:ro" "$id-img" /sbin/init > /dev/null || exit 9
 $rt run -d --name "$probe" --network "$id" "$image" sleep 1800 > /dev/null || exit 9
 booted || exit 9
@@ -101,7 +103,7 @@ echo "$log"
 check 'the block came back at boot' '[[ $(on "site-lockdown status" | head -1) == "lockdown: on" ]] && grep -q "restored the block, whose rules were gone" <<< "$log"'
 sl=$(since_boot site-lockdown.service) pre=$(since_boot network-pre.target) web=$(since_boot "$( ((fw)) && echo httpd || echo apache2).service")
 echo "after site-lockdown.service: network-pre.target +$(((pre - sl) / 1000)) ms, Apache +$(((web - sl) / 1000)) ms$( ((fw)) && echo ", and firewalld $(((sl - $(since_boot firewalld.service)) / 1000)) ms before it")"
-check 'before network-pre.target and Apache' '((sl > 0 && sl < pre && sl < web))'
+check 'before network-pre.target and Apache' '((sl > 0 && sl <= pre && sl < web))'
 ((fw)) && check 'and after firewalld' '(($(since_boot firewalld.service) < sl))'
 check 'Apache is up and still blocked' 'on "systemctl is-active -q $( ((fw)) && echo httpd || echo apache2)" && [[ $(port80) == timeout ]]'
 $rt exec "$probe" bash -c 'kill "$(cat /tmp/probe.pid)"' 

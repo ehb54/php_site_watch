@@ -342,8 +342,8 @@ sudo /usr/local/sbin/site-lockdown off
   blocked too, on firewalld and Ubuntu hosts alike, and firewalld's and Docker's own rules are
   left alone.
 - **Staying on:** `site-lockdown on` enables `site-lockdown.service`, which puts the block back at
-  boot right after firewalld and before the network comes up, so a rebooting server is never
-  reachable on the blocked ports, and again after every firewalld restart.
+  boot right after firewalld and before the network and the web servers, MySQL/MariaDB and Docker
+  start, so a rebooting server is never reachable on the blocked ports, and again after every firewalld restart.
   `site-lockdown.timer` also checks every minute, for anything else that removes it, such as
   `nft flush ruleset` or a restart of `nftables.service`. `off` disables them. Without systemd, run
   `site-lockdown enforce` after such events.
@@ -457,6 +457,10 @@ bash test/test-systemd.sh     # Rocky 9; or another image, e.g. docker.io/librar
 ```
 
 ## Versions
+
+- **1.9.2:** `site-lockdown.service` is also ordered before httpd, apache2, nginx, MariaDB/MySQL and
+  Docker, which otherwise only wait for `network.target` and could start first where nothing
+  pulls that in; the live tests accept crash messages with core dumps
 
 - **1.9.1:** after a reboot, `site-lockdown` restores the block before the network comes up, instead
   of after Docker (which left a locked-down server reachable for a few seconds), and again after

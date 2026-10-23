@@ -68,7 +68,8 @@ perl /s/php-site-watch.pl > /tmp/r1.txt; rc=$?
 cat /tmp/r1.txt; echo
 check 'findings: exit 1' '((rc == 1))'
 check 'account and logs found' 'grep -q "PHP account apache, [1-9]" /tmp/r1.txt'
-check 'crashed workers reported' 'grep -q "exited on signal 11 (SIGSEGV)" /tmp/r1.txt'
+# with core dumps allowed, as on GitHub's runners, php-fpm adds " - core dumped"
+check 'crashed workers reported' 'grep -qE "exited on signal 11 \(SIGSEGV( - core dumped)?\)" /tmp/r1.txt'
 check 'real out-of-memory error reported' 'grep -q "Allowed memory size of 8388608 bytes exhausted" /tmp/r1.txt'
 check 'FastCGI errors reported, scanner noise left out' 'grep -q AH01067 /tmp/r1.txt && grep -q "reset by peer" /tmp/r1.txt && ! grep -q AH01071 /tmp/r1.txt'
 check "health shows PHP ${old%%-*} and the missing fix" 'grep -qF "PHP: PHP ${old%%-*} (/usr/sbin/php-fpm)" /tmp/r1.txt && grep -qF "!! php-fpm-$old" /tmp/r1.txt && grep -q " lacks the PHP2Shell fix" /tmp/r1.txt'

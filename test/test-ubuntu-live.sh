@@ -71,7 +71,8 @@ psw > /tmp/r1.txt; rc=$?
 cat /tmp/r1.txt; echo
 check 'findings: exit 1' '((rc == 1))'
 check 'account detected from the Apache workers, logs found' 'grep -q "PHP account www-data, [1-9]" /tmp/r1.txt'
-check 'crashed workers reported' 'grep -q "AH00052: child pid [0-9]* exit signal Segmentation fault" /tmp/r1.txt'
+# AH00051 ("possible coredump") instead of AH00052 where core dumps are allowed, as on GitHub's runners
+check 'crashed workers reported' 'grep -qE "AH0005[12]: child pid [0-9]* exit signal Segmentation fault" /tmp/r1.txt'
 check 'real out-of-memory error reported' 'grep -q "Allowed memory size of 8388608 bytes exhausted" /tmp/r1.txt'
 check '500 response and POST sender counted' 'grep -qE "^ +1  127\.0\.0\.1 GET /oom\.php 500$" /tmp/r1.txt && grep -qE "^ +1  127\.0\.0\.1$" /tmp/r1.txt'
 check 'old build: no fix' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php$v-common $old: NO" /tmp/r1.txt'
