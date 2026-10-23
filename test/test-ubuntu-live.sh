@@ -8,7 +8,7 @@
 set -u
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
-psw() { perl /s/php-site-watch.pl "$@"; }
+psw() { perl /s/php-site-watch.pl; }
 get() {    # PATH [BODY]: one request to the local Apache, a POST if there is a body; prints the status
     local status
     exec 3<> /dev/tcp/127.0.0.1/80 || return 1
@@ -41,7 +41,9 @@ new=$(apt-cache madison "libapache2-mod-php$v" | awk '{print $3}' | head -1)
 [[ -n $old && $old != "$new" ]] || { echo "no older build of PHP $v to update from"; exit 9; }
 pkgs=$(apt-get -s install --no-install-recommends "libapache2-mod-php$v" \
            | awk -v v="$v" '$1 == "Inst" && ($2 ~ "^php" v "-" || $2 == "libapache2-mod-php" v) {print $2}')
-apt-get -y -q install --no-install-recommends apache2 procps iproute2 $(for p in $pkgs; do echo "$p=$old"; done) >> /tmp/apt.log 2>&1 \
+old_pkgs=() new_pkgs=()
+for p in $pkgs; do old_pkgs+=("$p=$old") new_pkgs+=("$p=$new"); done
+apt-get -y -q install --no-install-recommends apache2 procps iproute2 "${old_pkgs[@]}" >> /tmp/apt.log 2>&1 \
     || { tail /tmp/apt.log; exit 9; }
 dpkg-query -W -f '${Package} ${Version}\n' $pkgs
 
@@ -76,7 +78,7 @@ check 'old build: no fix' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in 
 check 'Apache runs the installed module: nothing flagged' '! grep -q "still runs a PHP module" /tmp/r1.txt && [[ $(served) == current ]]'
 
 echo; echo "######## after updating PHP while Apache keeps running"
-apt-get -y -q install --no-install-recommends $(for p in $pkgs; do echo "$p=$new"; done) >> /tmp/apt.log 2>&1 \
+apt-get -y -q install --no-install-recommends "${new_pkgs[@]}" >> /tmp/apt.log 2>&1 \
     || { tail /tmp/apt.log; exit 9; }
 grep -h 'policy-rc.d denied' /tmp/apt.log | sort -u
 psw > /tmp/r2.txt

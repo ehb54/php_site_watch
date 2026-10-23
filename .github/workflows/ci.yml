@@ -1,0 +1,140 @@
+# Tier 1: static checks and the container test suites, on every pull request and push to main.
+# Each suite runs as the README's Tests section shows, with docker instead of podman. The live
+# Apache + PHP suites, the systemd tests and the VM reboot tests are for a later, scheduled tier.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash test/lint.sh
+
+  run:
+    name: test-run ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: rocky8,  image: quay.io/rockylinux/rockylinux:8 }
+          - { name: rocky9,  image: quay.io/rockylinux/rockylinux:9 }
+          - { name: rocky10, image: quay.io/rockylinux/rockylinux:10 }
+    env:
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # SYS_PTRACE lets container root see socket owners, as real root can
+      - run: docker run --rm --cap-add SYS_PTRACE -v "$PWD/test:/t:ro" -v "$PWD:/s:ro" "$IMAGE" bash /t/test-run.sh
+
+  setup:
+    name: test-setup ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: rocky8,       image: quay.io/rockylinux/rockylinux:8 }
+          - { name: rocky9,       image: quay.io/rockylinux/rockylinux:9 }
+          - { name: rocky10,      image: quay.io/rockylinux/rockylinux:10 }
+          - { name: ubuntu22.04,  image: docker.io/library/ubuntu:22.04 }
+          - { name: debian12,     image: docker.io/library/debian:12-slim }
+    env:
+      IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker run --rm -v "$PWD:/s:ro" "$IMAGE" bash /s/test/test-setup.sh
+
+  ubuntu:
+    name: test-ubuntu ${{ matrix.name }}${{ matrix.ptrace && ' ptrace' || '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ubuntu20.04, ubuntu22.04, ubuntu24.04, debian12, debian13]
+        ptrace: [false, true]
+        include:
+          - { name: ubuntu20.04, image: docker.io/library/ubuntu:20.04 }
+          - { name: ubuntu22.04, image: docker.io/library/ubuntu:22.04 }
+          - { name: ubuntu24.04, image: docker.io/library/ubuntu:24.04 }
+          - { name: debian12,    image: docker.io/library/debian:12-slim }
+          - { name: debian13,    image: docker.io/library/debian:13-slim }
+    env:
+      IMAGE: ${{ matrix.image }}
+      PTRACE: ${{ matrix.ptrace }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # each half of the sockets checks: without and with CAP_SYS_PTRACE
+      - run: |
+          caps=()
+          if [[ $PTRACE == true ]]; then caps=(--cap-add SYS_PTRACE); fi
+          docker run --rm "${caps[@]}" -v "$PWD:/s:ro" "$IMAGE" bash /s/test/test-ubuntu.sh
+
+  lockdown:
+    name: test-lockdown ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: rocky8,      image: quay.io/rockylinux/rockylinux:8 }
+          - { name: rocky9,      image: quay.io/rockylinux/rockylinux:9 }
+          - { name: rocky10,     image: quay.io/rockylinux/rockylinux:10 }
+          - { name: ubuntu20.04, image: docker.io/library/ubuntu:20.04 }
+          - { name: ubuntu22.04, image: docker.io/library/ubuntu:22.04 }
+          - { name: ubuntu24.04, image: docker.io/library/ubuntu:24.04 }
+    env:
+      IMAGE: ${{ matrix.image }}
+      CONTAINER_RT: docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # containers can't load kernel modules; load what the block and the test's address
+      # translation use (some are built into newer kernels)
+      - run: |
+          for m in nf_tables nft_fib nft_fib_inet nft_fib_ipv4 nft_fib_ipv6 nft_counter nft_ct nf_nat nft_nat nft_chain_nat; do
+              sudo modprobe "$m" 2> /dev/null || echo "no module $m (built in, or not available)"
+          done
+      - run: bash test/test-lockdown.sh "$IMAGE"
+
+  docker:
+    name: test-docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash test/test-docker.sh

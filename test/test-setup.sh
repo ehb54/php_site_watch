@@ -13,7 +13,7 @@ else
     get_cron() { apt-get -y -q install cron > /dev/null 2>&1; }
     hint='on Debian or Ubuntu: apt-get install procps iproute2'
 fi
-cp -r /s /repo && cd /repo
+cp -r /s /repo && cd /repo || exit 9
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
 c=/etc/cron.d/php-site-watch
