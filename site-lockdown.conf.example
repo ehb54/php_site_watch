@@ -1,0 +1,15 @@
+# /etc/site-lockdown.conf: settings for site-lockdown on this server. One "key = value" per line;
+# # starts a comment. Changes take effect at the next "site-lockdown on"; run it again while the
+# block is on to apply them.
+
+# Addresses or networks that still reach the web ports (and MySQL) during a lockdown, such as
+# your own, so you can check a site before opening it again. IPv4 or IPv6, one or more per line.
+# Traffic from this server itself and its containers always gets through, and SSH is never blocked.
+# allow = 203.0.113.7
+# allow = 198.51.100.0/24, 2001:db8::/48
+
+# Web ports blocked by "site-lockdown on", for TCP and UDP (default 80 443).
+# ports = 80 443
+
+# MySQL ports blocked as well by "site-lockdown on --mysql" (default 3306).
+# mysql-ports = 3306

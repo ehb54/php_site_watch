@@ -44,7 +44,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.8.0';
+our $VERSION = '1.9.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -509,6 +509,34 @@ sub health {
         push @problems, "disk $mount $pct% full" if $pct >= 90;
     }
     push @lines, 'disk use: ' . join(', ', @use) if @use;
+
+    # The emergency block, and the fleet control hosts that may turn it on. A key that is not
+    # limited to fleet-agent could do anything the fleet user can.
+    if (-x '/usr/local/sbin/site-lockdown') {
+        my @s = cmd_lines('/usr/local/sbin/site-lockdown', 'status');
+        if (@s && $s[0] =~ /^lockdown: (on.*)/) {
+            push @problems, "LOCKDOWN $1" . ($s[1] ? ", $s[1]" : '') . ($s[2] ? "; $s[2]" : '');
+            push @lines, @s[3 .. $#s];
+        } elsif (@s && $s[0] =~ /^lockdown: off, but/) {
+            push @problems, $s[0];
+        } elsif (@s) {
+            push @lines, $s[0];
+        }
+    }
+    my $fleet_home = (getpwnam 'fleet')[7];
+    if ($fleet_home && open my $fh, '<', "$fleet_home/.ssh/authorized_keys") {
+        my (@hosts, $loose);
+        while (<$fh>) {
+            next if /^\s*(?:#|$)/;
+            if (m{^restrict,from="([^"]+)",command="/usr/local/sbin/fleet-agent --controller ([\w.-]+)" \S+ \S+ fleet:\2$}) {
+                push @hosts, "$2 (from $1)";
+            } else {
+                $loose++;
+            }
+        }
+        push @lines, 'fleet control hosts: ' . (@hosts ? join(', ', @hosts) : 'none');
+        push @problems, "$loose key(s) in $fleet_home/.ssh/authorized_keys are not limited to fleet-agent" if $loose;
+    }
 
     my %containers;
     for my $pid (map { /(\d+)/ ? $1 : () } cmd_lines('ps', '-eo', 'pid=')) {

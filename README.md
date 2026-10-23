@@ -35,6 +35,12 @@ under the same user ID as the host's PHP but belong to their own setups. The hea
 how many containers are running. To watch PHP in a container, run php-site-watch inside it (see
 [Containers](#containers)).
 
+Two companions come with it, for when something is found:
+[`site-lockdown`](#emergency-lockdown), an emergency switch that blocks the web ports (and MySQL on
+request) from everywhere but your own addresses, and [`fleet-agent`](#fleet-control-hosts), the one
+command a fleet control host may run on the server: it reads reports and can turn the lockdown on,
+never off.
+
 ## Requirements
 
 - Linux, run as root (to read the logs and see every process and socket)
@@ -43,10 +49,15 @@ how many containers are running. To watch PHP in a container, run php-site-watch
   On Debian or Ubuntu, where perl and find are always there: `apt-get install procps iproute2 git`
 - For the scheduled runs: cron (`cronie`, or `cron` on Debian and Ubuntu), a local `sendmail`
   such as postfix configured to send outgoing mail, and `logrotate` for the run log
+- For `site-lockdown`: nftables (`dnf install nftables`, or `apt-get install nftables`; the
+  `nftables` service itself need not run), and systemd to keep the block in place across reboots.
+  For fleet control hosts: `sudo` and OpenSSH 7.2 or later
 
 Tested on Rocky Linux 8.10 and 9.8, including a live Apache 2.4.37 + php-fpm 7.4.33 setup
 delivering through postfix, and in Ubuntu 20.04, 22.04 and 24.04 and Debian 12 and 13 containers,
-including the `docker exec` setup described under [Containers](#containers). It reads php-fpm,
+including the `docker exec` setup described under [Containers](#containers). `site-lockdown` and
+`fleet-agent` are tested in Rocky Linux 8 and 9 and Ubuntu 20.04, 22.04 and 24.04 containers
+(nftables 0.9.3 to 1.0.9), from a second and third container on the same network. It reads php-fpm,
 PHP, Apache and nginx log formats, including rotated `.gz` files, and has read the Apache logs of
 an Ubuntu 20.04 container running PHP 7.4 as mod_php.
 
@@ -63,6 +74,8 @@ similar systems its safe PATH leaves out `/usr/local/sbin`), a fully commented
 `/etc/php-site-watch.conf` (only if there isn't one yet), a logrotate entry for the run log, and
 `/etc/cron.d/php-site-watch` with two jobs that mail to the recipients in the config. `--mailto`
 adds recipients there (comma-separated); with none, cron mails the reports to root instead.
+It also installs `/usr/local/sbin/site-lockdown` with its systemd units and a commented
+`/etc/site-lockdown.conf`, and `/usr/local/sbin/fleet-agent`; neither does anything until used.
 
 On an UltraScan LIMS server, start from the example configuration, which allows what the LIMS
 normally does as `us3`:
@@ -104,9 +117,14 @@ Later:
 
 ```bash
 sudo ./setup.sh update             # pull the latest version and reinstall; config and cron job are kept
-sudo ./setup.sh uninstall          # remove the script, cron job and logrotate entry; config, history and log are kept
-sudo ./setup.sh uninstall --purge  # also remove /etc/php-site-watch.conf, /var/lib/php-site-watch and the run log
+sudo ./setup.sh uninstall          # remove the scripts, cron job, logrotate entry, site-lockdown units and the
+                                   # control hosts' sudo rule; config, history and logs are kept
+sudo ./setup.sh uninstall --purge  # also remove the configs, /var/lib/php-site-watch, the logs, site-lockdown's
+                                   # state and the fleet user with its keys
 ```
+
+Uninstall refuses while a lockdown is on, so the block never stays behind without the command
+that removes it.
 
 To change the schedule, edit `/etc/cron.d/php-site-watch`; running `setup.sh install --cron`
 again rewrites it.
@@ -196,7 +214,9 @@ yourself with `scan` lines.
   connections from it to unfamiliar addresses.
 - **Health lines marked `!!`:** a web server or php-fpm service that is enabled but not running,
   a disk over 90% full, a PHP package without the PHP2Shell fix, a php-fpm that needs a restart
-  to pick up an update, or an Apache with mod_php that needs a stop and start for it.
+  to pick up an update, an Apache with mod_php that needs a stop and start for it, a lockdown
+  that is on (or on with its rules gone), and a key for the `fleet` user that isn't limited to
+  `fleet-agent`.
 
 ## The PHP2Shell fix check
 
@@ -289,6 +309,77 @@ sudo docker run --rm --read-only --network none \
 The options after the image name are php-site-watch's. Only the logs, files and health mean
 something there; the processes and sockets are those of the throwaway container.
 
+## Emergency lockdown
+
+When a vulnerability is being exploited and no fix is installed yet, `site-lockdown` blocks the
+web ports to the server from everywhere except the addresses you allow:
+
+```bash
+sudo /usr/local/sbin/site-lockdown on --reason "CVE-2026-12345, no fix yet"
+sudo /usr/local/sbin/site-lockdown on --mysql      # add MySQL while it is on
+sudo /usr/local/sbin/site-lockdown status
+sudo /usr/local/sbin/site-lockdown off
+```
+
+- **What it blocks:** TCP and UDP 80 and 443 to the server, and with `--mysql` TCP 3306 as well.
+  UltraScan's desktop clients use MySQL, so `--mysql` is for a MySQL or MariaDB vulnerability or a
+  full lockdown. Connections already open on those ports are cut.
+- **What still gets through:** SSH, always; traffic from the server itself and from its containers
+  and VMs; and the addresses in `/etc/site-lockdown.conf` (`allow = ADDRESS or NETWORK`), so you
+  can check a site before opening it again. The ports can be changed there too. Run
+  `site-lockdown on` again while it is on to apply changes.
+- **How:** an nftables table of its own, `inet site_lockdown`, which runs before firewalld's and
+  Docker's rules and before address translation. So ports Docker publishes for containers are
+  blocked too, on firewalld and Ubuntu hosts alike, and firewalld's and Docker's own rules are
+  left alone.
+- **Staying on:** `site-lockdown on` enables `site-lockdown.service`, which puts the block back at
+  boot, and `site-lockdown.timer`, which checks every minute that a firewall reload or
+  `nft flush ruleset` hasn't removed it; `off` disables both. Without systemd, run
+  `site-lockdown enforce` after such events.
+- **Seeing it:** `status` says since when, who turned it on and why, what is blocked and how many
+  packets were dropped. Every change goes to `/var/log/site-lockdown.log` and to syslog, and the
+  daily status report shows a lockdown at the top (`!! LOCKDOWN on, since ...`) until it is off.
+- **Limits:** a firewall can't tell the sites on one server apart, so it blocks all of them. And
+  someone who already has root on the server can remove it; for that, block outside the server,
+  such as with the cloud's security groups or at the network's firewall.
+
+## Fleet control hosts
+
+A control host is a machine that looks after many servers over SSH. On each server it gets a key
+that can only run `fleet-agent`, which accepts five requests:
+
+| Request | What it does |
+|---|---|
+| `ping` | the server's name and versions |
+| `report` | the latest saved reports and runs (`php-site-watch --last`) |
+| `packages` | installed packages, and the security updates the package manager already knows about (nothing is downloaded) |
+| `lockdown status` | `site-lockdown status` |
+| `lockdown on [--mysql] [REASON]` | turns the lockdown on, recorded as done by that control host |
+
+Turning the lockdown off, installing software and changing settings can't be done through it, so a
+stolen control host key can read reports and lock sites, and nothing else. Every request, refused
+or not, goes to syslog (authpriv).
+
+```bash
+sudo ./setup.sh controller add ctl1 --from 203.0.113.10 --key 'ssh-ed25519 AAAA...'
+./setup.sh controller list
+sudo ./setup.sh controller remove ctl1
+```
+
+`controller add` creates a `fleet` user without a password (its `~/.ssh` belongs to root, so it
+can't add keys of its own), a key line limited to `fleet-agent` and to the given addresses
+(`restrict,from="...",command="..."`), and a sudo rule that lets `fleet-agent` run itself as root,
+where it checks the request again. If sshd only lets listed users in (`AllowUsers`), it prints
+the line to add. Then, from the control host:
+
+```bash
+ssh fleet@server report
+ssh fleet@server lockdown on --mysql CVE-2026-12345 exploited, no fix yet
+```
+
+The daily status report lists the control hosts (`fleet control hosts: ctl1 (from 203.0.113.10)`)
+and flags any key of the `fleet` user that isn't limited this way.
+
 ## Tests
 
 `test/` holds sample logs with planted problems, fixture changelogs and test scripts, which print
@@ -322,8 +413,21 @@ podman run --rm -q -v "$PWD:/s:ro,z" docker.io/library/ubuntu:22.04 bash /s/test
 bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 ```
 
+`site-lockdown` and `fleet-agent` need a network of containers, so their test also runs on the
+container host itself, with podman or docker (it creates and removes three containers and a
+network):
+
+```bash
+# the block seen from another container, allowed addresses, enforce, and fleet-agent over SSH:
+# what a control host may and may not do, its address limit, the health lines, uninstall
+bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/library/ubuntu:20.04
+```
+
 ## Versions
 
+- **1.9.0:** `site-lockdown`, an emergency block for the web ports and optionally MySQL that only
+  a person can lift; `fleet-agent` and `setup.sh controller add|list|remove` for fleet control
+  hosts; the status report shows a lockdown and the control hosts, and flags unrestricted keys
 - **1.8.0:** an Apache still running a PHP module an update replaced (mod_php) is flagged, with
   advice to stop and start it, since a graceful restart keeps the old module; `setup.sh` on
   Debian and Ubuntu: apt package hints, and `--cron` checks that cron itself is installed

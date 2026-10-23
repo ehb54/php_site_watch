@@ -1,0 +1,13 @@
+# site-lockdown (installed by setup.sh): puts the emergency block back if it is on but its rules
+# are gone. Enabled by "site-lockdown on" for boot, and run every minute by site-lockdown.timer,
+# until "site-lockdown off" disables both.
+[Unit]
+Description=Restore the site-lockdown block while it is on
+After=network-pre.target firewalld.service nftables.service docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/site-lockdown enforce
+
+[Install]
+WantedBy=multi-user.target
