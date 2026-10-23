@@ -53,11 +53,11 @@ never off.
   `nftables` service itself need not run), and systemd to keep the block in place across reboots.
   For fleet control hosts: `sudo` and OpenSSH 7.2 or later
 
-Tested on Rocky Linux 8.10 and 9.8, including a live Apache 2.4.37 + php-fpm 7.4.33 setup
-delivering through postfix, and in Ubuntu 20.04, 22.04 and 24.04 and Debian 12 and 13 containers,
+Tested on Rocky Linux 8.10, 9.8 and 10.2, including live Apache + php-fpm setups (PHP 7.4.33,
+8.0.30 and 8.3.36) delivering through postfix, and in Ubuntu 20.04, 22.04 and 24.04 and Debian 12 and 13 containers,
 including the `docker exec` setup described under [Containers](#containers). `site-lockdown` and
-`fleet-agent` are tested in Rocky Linux 8 and 9 and Ubuntu 20.04, 22.04 and 24.04 containers
-(nftables 0.9.3 to 1.0.9), from a second and third container on the same network. It reads php-fpm,
+`fleet-agent` are tested in Rocky Linux 8, 9 and 10 and Ubuntu 20.04, 22.04 and 24.04 containers
+(nftables 0.9.3 to 1.1.5), from a second and third container on the same network. It reads php-fpm,
 PHP, Apache and nginx log formats, including rotated `.gz` files, and has read the Apache logs of
 an Ubuntu 20.04 container running PHP 7.4 as mod_php.
 
@@ -225,6 +225,11 @@ health section looks for `CVE-2026-109618` in the changelog of the installed pac
 
 - RPM systems (RHEL, Rocky, AlmaLinux, Oracle Linux): `rpm -q --changelog` of the package that
   provides the running php-fpm, or the `php` command.
+- Packages that follow PHP's own releases instead of backporting, such as RHEL 10 and Rocky 10
+  (whose changelog says only `rebase to 8.3.36`), Remi's or Ondřej Surý's: PHP's releases with
+  the fix are 8.2.35, 8.3.36, 8.4.27 and 8.5.12, so those versions or later count as fixed
+  (`yes (8.3.36 is a PHP release with the fix)`). Older branches (7.4, 8.0, 8.1) only get the
+  fix as a distribution backport.
 - Debian and Ubuntu: `/usr/share/doc/phpX.Y-common/changelog.Debian.gz`, once for each PHP
   version installed. The packages of a version (`phpX.Y-cli`, `libapache2-mod-phpX.Y`,
   `phpX.Y-fpm` and so on) are built together, so this covers mod_php as well.
@@ -248,6 +253,8 @@ Builds with the fix:
 | Ubuntu 22.04 | php8.1 | `8.1.2-1ubuntu2.28` (USN-8948-1) |
 | Ubuntu 24.04 | php8.3 | `8.3.6-0ubuntu0.24.04.13` (USN-8948-1) |
 | RHEL 8, Rocky, AlmaLinux, Oracle Linux 8 | php 7.4 module | `7.4.33-8` |
+| Rocky 9 | php 8.0 | `8.0.30-8.el9_8.1` |
+| RHEL 10, Rocky 10 | php 8.3 | `8.3.36-1` (PHP 8.3.36) |
 
 The check reads the installed packages, but a running PHP keeps the code it started with. The
 health section flags a php-fpm that still runs a binary an update replaced, and an Apache that
@@ -384,16 +391,17 @@ and flags any key of the `fleet` user that isn't limited this way.
 
 `test/` holds sample logs with planted problems, fixture changelogs and test scripts, which print
 `ok` or `FAIL` per check. Run them in throwaway containers from the repository directory (the
-Rocky ones work with `:8` and `:9`):
+Rocky ones work with `:8`, `:9` and `:10`):
 
 ```bash
 # sample logs, planted files, processes and sockets, mail through a stand-in sendmail,
 # the run log and --last (SYS_PTRACE lets container root see socket owners, as real root can)
 podman run --rm -q --cap-add SYS_PTRACE -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:9 bash /t/test-run.sh
-# real Apache + php-fpm 7.4 and postfix: crashed workers, out-of-memory, PHP2Shell fix check
+# real Apache + php-fpm and postfix (:8, :9 or :10): crashed workers, out-of-memory, the PHP2Shell
+# fix check before and after updating PHP, and php-fpm still running the replaced binary
 podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
-    quay.io/rockylinux/rockylinux:8 bash /t/test-el8-live.sh
+    quay.io/rockylinux/rockylinux:10 bash /t/test-el-live.sh
 # setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate,
 # uninstall (also with Ubuntu and Debian images, e.g. docker.io/library/ubuntu:22.04)
 podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh
@@ -427,7 +435,9 @@ bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/librar
 
 - **1.9.0:** `site-lockdown`, an emergency block for the web ports and optionally MySQL that only
   a person can lift; `fleet-agent` and `setup.sh controller add|list|remove` for fleet control
-  hosts; the status report shows a lockdown and the control hosts, and flags unrestricted keys
+  hosts; the status report shows a lockdown and the control hosts, and flags unrestricted keys;
+  PHP releases with the PHP2Shell fix (8.3.36 and so on) count as fixed, for Rocky 10's PHP,
+  whose changelog doesn't name the CVE; tested on Rocky 10
 - **1.8.0:** an Apache still running a PHP module an update replaced (mod_php) is flagged, with
   advice to stop and start it, since a graceful restart keeps the old module; `setup.sh` on
   Debian and Ubuntu: apt package hints, and `--cron` checks that cron itself is installed

@@ -564,9 +564,12 @@ sub health {
         if (grep { -x } qw(/usr/bin/rpm /bin/rpm)) {
             my $pkg = cmd_out('rpm', '-qf', $exe);
             if ($pkg && $pkg !~ /not owned|^error/) {
-                my $fixed = grep { /CVE-2026-109618/ } cmd_lines('rpm', '-q', '--changelog', $pkg);
-                push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg: " . ($fixed ? 'yes' : 'NO');
-                push @problems, "$pkg lacks the PHP2Shell fix" unless $fixed;
+                my $version = cmd_out('rpm', '-q', '--qf', '%{VERSION}', $pkg) // '';
+                my $fixed   = (grep { /CVE-2026-109618/ } cmd_lines('rpm', '-q', '--changelog', $pkg)) ? 'yes'
+                            : php_release_fixed($version) ? "yes ($version is a PHP release with the fix)"
+                            : 'NO';
+                push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg: $fixed";
+                push @problems, "$pkg lacks the PHP2Shell fix" if $fixed eq 'NO';
             }
         }
     }
@@ -594,11 +597,25 @@ sub health {
                 my @log = cmd_lines('gzip', '-dc', '--', $changelog);
                 $fixed = !@log ? "unknown (cannot read $changelog)" : (grep { /CVE-2026-109618/ } @log) ? 'yes' : 'NO';
             }
+            # packages that follow PHP's own releases, such as Ondrej Sury's, show the fix in the version
+            $fixed = "yes ($1 is a PHP release with the fix)"
+                if $fixed ne 'yes' && $version =~ /^(?:\d+:)?(\d+\.\d+\.\d+)/ && php_release_fixed($1);
             push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg $version: $fixed";
             push @problems, "$pkg $version lacks the PHP2Shell fix" if $fixed eq 'NO';
         }
     }
     return ({ title => 'Server health (now)', alert => 0, lines => [ (map { "!! $_" } @problems), @lines ] }, @problems);
+}
+
+# PHP's own releases with the PHP2Shell fix (GHSA-w8hw-w9fx-j79w, GHSA-6wmf-4rv5-p3rp) are 8.2.35,
+# 8.3.36, 8.4.27 and 8.5.12; later branches have it from the start. Distributions that follow those
+# releases, such as RHEL 10 and Rocky 10, only say "rebase to 8.3.36" in their changelogs. Older
+# branches (7.4, 8.0, 8.1) get the fix only as a distribution backport, which the changelog shows.
+sub php_release_fixed {
+    my ($maj, $min, $patch) = ($_[0] // '') =~ /^(\d+)\.(\d+)\.(\d+)/ or return 0;
+    my %first = ('8.2' => 35, '8.3' => 36, '8.4' => 27, '8.5' => 12);
+    return $patch >= $first{"$maj.$min"} if exists $first{"$maj.$min"};
+    return $maj > 8 || ($maj == 8 && $min > 5);
 }
 
 # A name for the container a process runs in ('' when not in one), taken from its cgroup paths.
