@@ -45,7 +45,7 @@ lockdown_state=/var/lib/site-lockdown
 lockdown_log=/var/log/site-lockdown.log
 agent_bin=/usr/local/sbin/fleet-agent
 unit_dir=/etc/systemd/system
-units=(site-lockdown.service site-lockdown.timer)
+units=(site-lockdown.service site-lockdown-check.service site-lockdown.timer)
 sudoers=/etc/sudoers.d/fleet-agent
 fleet=fleet
 address='^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$|^[A-Za-z0-9._-]+$'    # user@host, or a local name like root
@@ -328,7 +328,11 @@ install_fleet_tools() {
         for u in "${units[@]}"; do
             install -m 644 "$here/systemd/$u" "$unit_dir/$u"
         done
-        [[ -d /run/systemd/system ]] && systemctl daemon-reload
+        if [[ -d /run/systemd/system ]]; then
+            systemctl daemon-reload
+            # a lockdown that is on now gets the new units right away
+            [[ -e $lockdown_state/state ]] && systemctl enable --now --quiet site-lockdown.service site-lockdown.timer
+        fi
     fi
     command -v nft > /dev/null \
         || echo 'setup: warning: nft is missing, so site-lockdown cannot work here; install nftables (dnf install nftables, or apt-get install nftables)' >&2
