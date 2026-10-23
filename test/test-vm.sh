@@ -30,7 +30,10 @@ t=$(mktemp -d)
 sshport=$((20000 + $$ % 20000)) webport=$((40000 + $$ % 20000))
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
-vm() { ssh -q -i "$t/key" -p "$sshport" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 tester@127.0.0.1 "$@"; }
+# QEMU's user networking keeps the host's end of a connection open when the guest goes away, so
+# give up on a silent connection rather than wait for it
+vm() { ssh -q -i "$t/key" -p "$sshport" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+           -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 tester@127.0.0.1 "$@"; }
 # what the host gets from Apache in the VM: an HTTP status, or 000 for nothing
 page() { curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$webport/"; }
 up() {
@@ -92,7 +95,7 @@ echo; echo "######## reboot"
       sleep 0.25
   done ) &
 sleep 1
-vm 'sudo systemctl reboot' 2> /dev/null
+vm 'sudo systemd-run --quiet --on-active=1 systemctl reboot' 2> /dev/null    # a second from now, after this returns
 for i in $(seq 1 30); do vm true 2> /dev/null || break; sleep 2; done    # until it has gone down
 up || exit 9
 vm 'sudo systemctl is-system-running --wait' > /dev/null 2>&1
