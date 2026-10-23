@@ -398,8 +398,9 @@ GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), each on
 images; GitHub keeps every job's full output. The longer tests run every night, and on pull
 requests that change what they cover ([`.github/workflows/nightly.yml`](.github/workflows/nightly.yml)):
 the live Apache + PHP suites on all their images, the Rocky one a second time with its old PHP
-build from Rocky's vault, and `site-lockdown` under a real systemd. The static checks also run
-anywhere:
+build from Rocky's vault, and `site-lockdown` under a real systemd. Every Sunday, and on pull
+requests that change `site-lockdown`, [`.github/workflows/vm.yml`](.github/workflows/vm.yml) reboots
+real VMs with the block on. The static checks also run anywhere:
 
 ```bash
 # perl syntax (fleet-agent in taint mode), no modules beyond strict and warnings, one version in
@@ -454,6 +455,10 @@ bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/librar
 # restart of the container like a reboot, with another container probing port 80 throughout
 # (Docker only; systemd needs the host's cgroup v2, as on Rocky 9 and 10, Ubuntu 22.04 and later)
 bash test/test-systemd.sh     # Rocky 9; or another image, e.g. docker.io/library/ubuntu:24.04
+# site-lockdown on a real VM: a cloud image booted in QEMU with Apache (and firewalld on Rocky),
+# the block on, systemctl restart firewalld, a real reboot while the host asks for a page four
+# times a second, and off (needs KVM, QEMU and genisoimage; caches the image in ~/.cache/psw-vm)
+bash test/test-vm.sh rocky9   # or rocky8, rocky10, ubuntu24.04
 ```
 
 ## Versions
