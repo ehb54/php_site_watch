@@ -11,7 +11,7 @@ fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
 runas() { perl -e 'my @p = getpwnam(shift); $( = $p[3]; $) = "$p[3] $p[3]"; $< = $> = $p[2]; exec @ARGV or die "exec: $!"' www-data "$@"; }
 psw() { perl /s/php-site-watch.pl "$@"; }
-health() { psw --user www-data --scan /nonexistent "$@" | sed -n '/^== Server health/,/^$/p'; }
+health() { psw --user www-data --scan /nonexistent | sed -n '/^== Server health/,/^$/p'; }
 . /etc/os-release
 echo "######## $PRETTY_NAME, perl $(perl -e 'print $^V')"
 echo "dpkg excludes in this image: $(grep -h '^path-' /etc/dpkg/dpkg.cfg.d/* 2> /dev/null | paste -sd' ' -)"

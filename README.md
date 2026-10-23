@@ -1,5 +1,7 @@
 # php_site_watch
 
+[![CI](https://github.com/ehb54/php_site_watch/actions/workflows/ci.yml/badge.svg)](https://github.com/ehb54/php_site_watch/actions/workflows/ci.yml)
+
 `php-site-watch` checks an Apache or nginx + PHP server for signs of exploitation or trouble. It
 can mail an alert within the hour when something new shows up, and a status report every morning
 that also covers basic server health. Each scheduled run is logged, and the latest reports can be
@@ -390,6 +392,16 @@ The daily status report lists the control hosts (`fleet control hosts: ctl1 (fro
 and flags any key of the `fleet` user that isn't limited this way.
 
 ## Tests
+
+Every pull request and push to `main` runs the static checks and the container suites below on
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), each on all of its
+images; GitHub keeps every job's full output. The static checks also run anywhere:
+
+```bash
+# perl syntax (fleet-agent in taint mode), no modules beyond strict and warnings, one version in
+# the three scripts and the README, shellcheck, and systemd-analyze verify on the units
+bash test/lint.sh
+```
 
 `test/` holds sample logs with planted problems, fixture changelogs and test scripts, which print
 `ok` or `FAIL` per check. Run them in throwaway containers from the repository directory (the

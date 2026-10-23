@@ -10,7 +10,8 @@
 #   bash test/test-lockdown.sh quay.io/rockylinux/rockylinux:8   or   docker.io/library/ubuntu:20.04)
 set -u
 image=${1:-quay.io/rockylinux/rockylinux:9}
-rt=$(command -v podman || command -v docker) || { echo 'needs podman or docker'; exit 9; }
+# CONTAINER_RT=docker picks docker where both are installed, as on GitHub's runners
+rt=${CONTAINER_RT:-$(command -v podman || command -v docker)} || { echo 'needs podman or docker'; exit 9; }
 id=psw-lock-$$
 srv=$id-srv c1=$id-c1 c2=$id-c2
 t=$(mktemp -d)

@@ -16,7 +16,7 @@ check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; 
 
 today=$(date +%F)
 cp -r /t/logs /logs
-for f in $(find /logs -type f ! -name '*.gz'); do
+while IFS= read -r f; do
     sed -i -E \
         -e "s#22-Oct-2026#$(date +%d-%b-%Y)#g; s#21-Oct-2026#$(date -d yesterday +%d-%b-%Y)#g" \
         -e "s#22/Oct/2026#$(date +%d/%b/%Y)#g; s#21/Oct/2026#$(date -d yesterday +%d/%b/%Y)#g" \
@@ -24,7 +24,7 @@ for f in $(find /logs -type f ! -name '*.gz'); do
         -e "s#^\[(...) Oct 22 ([0-9:.]+) 2026\]#[\1 $(date '+%b %d') \2 $(date +%Y)]#" \
         -e "s#^\[(...) Oct 21 ([0-9:.]+) 2026\]#[\1 $(date -d yesterday '+%b %d') \2 $(date -d yesterday +%Y)]#" \
         -e "s#^\[(...) Oct 22 ([0-9:.]+) 2025\]#[\1 $(date '+%b %d') \2 $(($(date +%Y) - 1))]#" "$f"
-done
+done < <(find /logs -type f ! -name '*.gz')
 gz=/logs/httpd/access_log-20261023.gz
 gzip -dc $gz | sed "s#22/Oct/2026#$(date +%d/%b/%Y)#g" | gzip -c > $gz.new && mv $gz.new $gz
 touch -d '30 days ago' /logs/httpd/error_log-20261001    # a rotated file too old to matter
@@ -131,6 +131,7 @@ check 'the status waits for its turn, then runs' '(($(date +%s) - start >= 2)) &
 wait $holder
 
 echo; echo "######## 4: --quiet on a clean day after removing the planted files and processes"
+# shellcheck disable=SC2046    # one word per job
 { pkill -u websvc; kill $(jobs -p); wait; } 2> /dev/null    # every helper, including the root ncat listener
 rm -f /srv/www/htdocs/shell.php /srv/www/htdocs/another.php /tmp/x.bin /srv/nginx/site/n.php /srv/nginx/files/f.txt /srv/uploads/phpAbc123
 perl /s/php-site-watch.pl --quiet --config /t/test.conf --date "$(date -d '3 days ago' +%F)" "${logs[@]}" > /tmp/r4.txt; rc=$?
