@@ -1,0 +1,8 @@
+# site-lockdown (installed by setup.sh): run every minute by site-lockdown.timer while the block is
+# on, to put it back if something such as "nft flush ruleset" removed it.
+[Unit]
+Description=Check that the site-lockdown block is still in place
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/site-lockdown enforce

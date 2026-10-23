@@ -340,8 +340,10 @@ sudo /usr/local/sbin/site-lockdown off
   blocked too, on firewalld and Ubuntu hosts alike, and firewalld's and Docker's own rules are
   left alone.
 - **Staying on:** `site-lockdown on` enables `site-lockdown.service`, which puts the block back at
-  boot, and `site-lockdown.timer`, which checks every minute that a firewall reload or
-  `nft flush ruleset` hasn't removed it; `off` disables both. Without systemd, run
+  boot right after firewalld and before the network comes up, so a rebooting server is never
+  reachable on the blocked ports, and again after every firewalld restart.
+  `site-lockdown.timer` also checks every minute, for anything else that removes it, such as
+  `nft flush ruleset` or a restart of `nftables.service`. `off` disables them. Without systemd, run
   `site-lockdown enforce` after such events.
 - **Seeing it:** `status` says since when, who turned it on and why, what is blocked and how many
   packets were dropped. Every change goes to `/var/log/site-lockdown.log` and to syslog, and the
@@ -433,6 +435,9 @@ bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/librar
 
 ## Versions
 
+- **1.9.1:** after a reboot, `site-lockdown` restores the block before the network comes up, instead
+  of after Docker (which left a locked-down server reachable for a few seconds), and again after
+  every firewalld restart; the timer runs a separate check unit
 - **1.9.0:** `site-lockdown`, an emergency block for the web ports and optionally MySQL that only
   a person can lift; `fleet-agent` and `setup.sh controller add|list|remove` for fleet control
   hosts; the status report shows a lockdown and the control hosts, and flags unrestricted keys;

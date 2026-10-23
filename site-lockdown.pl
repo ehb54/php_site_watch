@@ -15,8 +15,9 @@
 #             on but never off.
 #   status    whether the block is on, since when, who turned it on and why, and how many
 #             packets it has stopped
-#   enforce   put the block back if it is on but its rules are gone, as after a reboot or a
-#             firewall reload (site-lockdown.timer runs this every minute while the block is on)
+#   enforce   put the block back if it is on but its rules are gone. While the block is on,
+#             site-lockdown.service runs this at boot, before the network comes up, and after
+#             every firewalld restart, and site-lockdown.timer runs it every minute.
 #
 # The block is its own nftables table (inet site_lockdown). It runs before firewalld's and
 # Docker's rules and before address translation, so it also covers ports Docker publishes for
@@ -28,7 +29,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.9.0';
+our $VERSION = '1.9.1';
 
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 $ENV{LC_ALL} = 'C';
@@ -191,15 +192,17 @@ sub print_status {
     print "packets dropped so far: $dropped\n" if $present;
 }
 
-# While the block is on, site-lockdown.service puts it back at boot and the timer every minute
-# (firewall reloads, or "nft flush ruleset" from nftables.service, remove it).
+# While the block is on, site-lockdown.service puts it back at boot before the network comes up
+# and after firewalld restarts, and the timer checks every minute (an "nft flush ruleset", such as
+# a restart of nftables.service does, removes it).
 sub units {
     my ($on) = @_;
     return 'no systemd here: the block will not come back by itself after a reboot or a firewall reload; run site-lockdown enforce then'
         unless -d '/run/systemd/system' && have('systemctl');
     return "the site-lockdown units are not installed in $unit_dir (setup.sh install puts them there)"
         unless -e "$unit_dir/site-lockdown.timer";
-    my @do = $on ? (['enable', '--quiet', 'site-lockdown.service'], ['enable', '--now', '--quiet', 'site-lockdown.timer'])
+    # started as well as enabled, so a firewalld restart now also restarts it
+    my @do = $on ? (['enable', '--now', '--quiet', 'site-lockdown.service', 'site-lockdown.timer'])
                  : (['disable', '--now', '--quiet', 'site-lockdown.timer', 'site-lockdown.service']);
     for (@do) {
         system('systemctl', @$_) == 0 or return "systemctl @$_ failed; the block may not come back by itself after a reboot";

@@ -1,5 +1,5 @@
-# site-lockdown (installed by setup.sh): while the block is on, check every minute that a firewall
-# reload or "nft flush ruleset" has not removed it.
+# site-lockdown (installed by setup.sh): while the block is on, check every minute that nothing has
+# removed it.
 [Unit]
 Description=Check every minute that the site-lockdown block is still in place
 
@@ -7,6 +7,7 @@ Description=Check every minute that the site-lockdown block is still in place
 OnBootSec=1min
 OnUnitActiveSec=1min
 AccuracySec=10s
+Unit=site-lockdown-check.service
 
 [Install]
 WantedBy=timers.target

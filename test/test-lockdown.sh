@@ -115,7 +115,7 @@ check 'the keys are root'\''s, not the fleet user'\''s' '[[ $(on "$srv" "stat -c
 check 'sudo rule in place and valid' 'on "$srv" "visudo -cf /etc/sudoers.d/fleet-agent" > /dev/null'
 check 'controller list' '[[ $(on "$srv" "cd /s && bash setup.sh controller list") == "ctl1  from $ip1  (ssh-ed25519)" ]]'
 out=$(fleet "$c1" ping)
-check 'ping' 'grep -q "^fleet-agent 1.9.0 on " <<< "$out" && grep -q "^php-site-watch 1.9.0$" <<< "$out"'
+check 'ping' 'grep -q "^fleet-agent 1.9.1 on " <<< "$out" && grep -q "^php-site-watch 1.9.1$" <<< "$out"'
 out=$(fleet "$c1" report)
 check 'report: php-site-watch --last' 'grep -q "^== Recent runs" <<< "$out"'
 out=$(fleet "$c1" packages)
