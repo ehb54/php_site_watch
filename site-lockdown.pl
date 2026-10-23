@@ -193,8 +193,8 @@ sub print_status {
 }
 
 # While the block is on, site-lockdown.service puts it back at boot before the network comes up
-# and after firewalld or nftables.service restarts, and the timer checks every minute (an
-# "nft flush ruleset" removes it, for one).
+# and after firewalld restarts, and the timer checks every minute (an "nft flush ruleset", such as
+# a restart of nftables.service does, removes it).
 sub units {
     my ($on) = @_;
     return 'no systemd here: the block will not come back by itself after a reboot or a firewall reload; run site-lockdown enforce then'

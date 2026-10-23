@@ -341,9 +341,9 @@ sudo /usr/local/sbin/site-lockdown off
   left alone.
 - **Staying on:** `site-lockdown on` enables `site-lockdown.service`, which puts the block back at
   boot right after firewalld and before the network comes up, so a rebooting server is never
-  reachable on the blocked ports, and again after every restart of firewalld or
-  `nftables.service`. `site-lockdown.timer` also checks every minute, for anything else that
-  removes it, such as `nft flush ruleset`. `off` disables them. Without systemd, run
+  reachable on the blocked ports, and again after every firewalld restart.
+  `site-lockdown.timer` also checks every minute, for anything else that removes it, such as
+  `nft flush ruleset` or a restart of `nftables.service`. `off` disables them. Without systemd, run
   `site-lockdown enforce` after such events.
 - **Seeing it:** `status` says since when, who turned it on and why, what is blocked and how many
   packets were dropped. Every change goes to `/var/log/site-lockdown.log` and to syslog, and the

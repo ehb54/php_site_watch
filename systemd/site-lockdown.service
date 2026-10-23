@@ -1,14 +1,15 @@
 # site-lockdown (installed by setup.sh): puts the emergency block back while it is on. Enabled and
 # started by "site-lockdown on", stopped and disabled by "site-lockdown off". At boot it runs after
 # firewalld and before the network comes up, so a locked-down server is never reachable while it
-# starts. It runs again after every restart of firewalld or nftables.service, and
-# site-lockdown.timer also checks every minute.
+# starts. It runs again after every firewalld restart. (Not tied to nftables.service as well:
+# firewalld conflicts with it, so a firewalld restart would then fail. site-lockdown.timer, which
+# checks every minute, covers nftables.service.)
 [Unit]
 Description=Restore the site-lockdown block while it is on
 After=firewalld.service nftables.service
 Before=network-pre.target
 Wants=network-pre.target
-PartOf=firewalld.service nftables.service
+PartOf=firewalld.service
 
 [Service]
 Type=oneshot
