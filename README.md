@@ -342,8 +342,8 @@ sudo /usr/local/sbin/site-lockdown off
   blocked too, on firewalld and Ubuntu hosts alike, and firewalld's and Docker's own rules are
   left alone.
 - **Staying on:** `site-lockdown on` enables `site-lockdown.service`, which puts the block back at
-  boot right after firewalld and before the network comes up, so a rebooting server is never
-  reachable on the blocked ports, and again after every firewalld restart.
+  boot right after firewalld and before the network and the web servers, MySQL/MariaDB and Docker
+  start, so a rebooting server is never reachable on the blocked ports, and again after every firewalld restart.
   `site-lockdown.timer` also checks every minute, for anything else that removes it, such as
   `nft flush ruleset` or a restart of `nftables.service`. `off` disables them. Without systemd, run
   `site-lockdown enforce` after such events.
@@ -395,7 +395,11 @@ and flags any key of the `fleet` user that isn't limited this way.
 
 Every pull request and push to `main` runs the static checks and the container suites below on
 GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)), each on all of its
-images; GitHub keeps every job's full output. The static checks also run anywhere:
+images; GitHub keeps every job's full output. The longer tests run every night, and on pull
+requests that change what they cover ([`.github/workflows/nightly.yml`](.github/workflows/nightly.yml)):
+the live Apache + PHP suites on all their images, the Rocky one a second time with its old PHP
+build from Rocky's vault, and `site-lockdown` under a real systemd. The static checks also run
+anywhere:
 
 ```bash
 # perl syntax (fleet-agent in taint mode), no modules beyond strict and warnings, one version in
@@ -413,7 +417,9 @@ Rocky ones work with `:8`, `:9` and `:10`):
 podman run --rm -q --cap-add SYS_PTRACE -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:9 bash /t/test-run.sh
 # real Apache + php-fpm and postfix (:8, :9 or :10): crashed workers, out-of-memory, the PHP2Shell
-# fix check before and after updating PHP, and php-fpm still running the replaced binary
+# fix check before and after updating PHP, and php-fpm still running the replaced binary. It
+# starts from a PHP build without the fix, from the previous minor release's vault once none is
+# left in the current repositories; -e PSW_VAULT=1 makes it use the vault now
 podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
     quay.io/rockylinux/rockylinux:10 bash /t/test-el-live.sh
 # setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate,
@@ -443,9 +449,18 @@ network):
 # the block seen from another container, allowed addresses, enforce, and fleet-agent over SSH:
 # what a control host may and may not do, its address limit, the health lines, uninstall
 bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/library/ubuntu:20.04
+# site-lockdown under a real systemd, booted in a privileged container with Apache and, on Rocky,
+# firewalld: the units, firewall-cmd --reload, systemctl restart firewalld, the timer, and a
+# restart of the container like a reboot, with another container probing port 80 throughout
+# (Docker only; systemd needs the host's cgroup v2, as on Rocky 9 and 10, Ubuntu 22.04 and later)
+bash test/test-systemd.sh     # Rocky 9; or another image, e.g. docker.io/library/ubuntu:24.04
 ```
 
 ## Versions
+
+- **1.9.2:** `site-lockdown.service` is also ordered before httpd, apache2, nginx, MariaDB/MySQL and
+  Docker, which otherwise only wait for `network.target` and could start first where nothing
+  pulls that in; the live tests accept crash messages with core dumps
 
 - **1.9.1:** after a reboot, `site-lockdown` restores the block before the network comes up, instead
   of after Docker (which left a locked-down server reachable for a few seconds), and again after
