@@ -46,9 +46,12 @@ runas touch /srv/nginx/site/n.php /srv/nginx/files/f.txt /srv/uploads/phpAbc123 
 mkdir -p /srv/www/htdocs/cache && chown websvc /srv/www/htdocs/cache && runas touch /srv/www/htdocs/cache/c.php
 printf '#!/bin/bash\necho "$*" >> /tmp/find-args\nexec /usr/bin/find "$@"\n' > /usr/local/bin/find && chmod +x /usr/local/bin/find
 runas touch -d '3 days ago' /srv/www/htdocs/old.php
+# for the PHP2Shell checks: a web shell, and a file to match by hash
+runas sh -c "printf '<?php system(\$_GET[\"c\"]); ?>\\n' > /srv/www/htdocs/up.php; echo 'php-site-watch test dropper' > /tmp/dropper.bin"
 
 ip=$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
 runas perl -e '$0 = "php-fpm: pool www"; sleep 600' &
+runas perl -e '$0 = "php-fpm: pool www"; system "sh", "-c", "sleep 600; true"' &    # a worker that starts a shell
 runas sleep 600 &
 ncat -lk 0.0.0.0 8099 > /dev/null &
 runas ncat -lk 0.0.0.0 4444 > /dev/null &
@@ -73,6 +76,19 @@ check 'PHP notices and warnings are not FastCGI failures' '! grep -qE "Content-t
 check 'application fatal errors grouped for context' 'grep -qE "^ +2  Uncaught Error: Undefined constant \"d\" in /srv/www/htdocs/somo/pubs.php:79$" /tmp/r1.txt'
 check 'listener and outbound connection found, loopback left out' 'grep -q "LISTEN  0.0.0.0:4444" /tmp/r1.txt && grep -q -- "-> $ip:8099" /tmp/r1.txt && ! grep -q -- "-> 127.0.0.1:8099" /tmp/r1.txt'
 check 'health section present' 'grep -q "== Server health (now)" /tmp/r1.txt'
+signs=$(sed -n '/^== Signs of PHP2Shell/,/^$/p' /tmp/r1.txt)
+check 'PHP2Shell: a reported address and scanner in the access log' 'grep -q "^reported indicator 103.216.220.92: 103.216.220.92 .*php2shell-scan/109618\"\$" <<< "$signs"'
+check 'PHP2Shell: a longer address is not a reported one' '! grep -q "137\.19\.200\.55" /tmp/r1.txt'
+check 'PHP2Shell: web shell code in an encoded request URL' 'grep -q "^web shell code: 5\.6\.7\.8 .*%3C%3Fphp%20echo%20system" <<< "$signs"'
+check 'PHP2Shell: the upload progress field in an error log' 'grep -q "^the session upload progress field the attack uses: .*ModSecurity" <<< "$signs"'
+check 'PHP2Shell: out of memory in Unknown, here and not with ordinary memory errors' 'grep -q "^out of memory before any script ran, as the attack causes: .*in Unknown on line 0\$" <<< "$signs" && ! sed -n "/^== PHP out of memory/,/^\$/p" /tmp/r1.txt | grep -q "in Unknown"'
+check 'PHP2Shell: a web shell file, listed once' 'grep -q "^web shell code: a request variable run as code or a command: .*  /srv/www/htdocs/up.php\$" <<< "$signs" && (($(grep -c "/srv/www/htdocs/up.php" /tmp/r1.txt) == 1))'
+check 'PHP2Shell: a shell started by a PHP worker, listed once' 'grep -qE "^the web server or PHP started a shell or tool: [0-9]+  .*  sh -c sleep 600; true  \(parent [0-9]+, php-fpm\)\$" <<< "$signs" && (($(grep -c "sh -c sleep 600; true" /tmp/r1.txt) == 1))'
+check 'PHP2Shell: indicators named in health' 'grep -qx "PHP2Shell indicators: 36 from CISA'"'"'s Sigma rule 261429 of 2026-10-23" /tmp/r1.txt'
+h=$(sha256sum /tmp/dropper.bin | cut -d" " -f1)
+perl /s/php-site-watch.pl --config /t/test.conf "${logs[@]}" --ioc "$h" --ioc 127.0.0.1 > /tmp/r1b.txt
+check 'PHP2Shell: an added hash matches a changed file' 'grep -q "^matches the reported hash $h: .*  /tmp/dropper.bin\$" /tmp/r1b.txt'
+check 'PHP2Shell: a connection with an added address' 'grep -qE "^a connection with an address reported attacking: \S+ +\S+ -> 127\.0\.0\.1:8099" /tmp/r1b.txt && grep -q "^PHP2Shell indicators: 36 from .*, 2 from the config\$" /tmp/r1b.txt'
 
 echo; echo "######## 2: --quiet, PHP account detected, no config"
 perl /s/php-site-watch.pl --quiet "${logs[@]}" > /tmp/r2.txt; rc=$?
@@ -133,7 +149,7 @@ wait $holder
 echo; echo "######## 4: --quiet on a clean day after removing the planted files and processes"
 # shellcheck disable=SC2046    # one word per job
 { pkill -u websvc; kill $(jobs -p); wait; } 2> /dev/null    # every helper, including the root ncat listener
-rm -f /srv/www/htdocs/shell.php /srv/www/htdocs/another.php /tmp/x.bin /srv/nginx/site/n.php /srv/nginx/files/f.txt /srv/uploads/phpAbc123
+rm -f /srv/www/htdocs/shell.php /srv/www/htdocs/another.php /srv/www/htdocs/up.php /tmp/dropper.bin /tmp/x.bin /srv/nginx/site/n.php /srv/nginx/files/f.txt /srv/uploads/phpAbc123
 perl /s/php-site-watch.pl --quiet --config /t/test.conf --date "$(date -d '3 days ago' +%F)" "${logs[@]}" > /tmp/r4.txt; rc=$?
 check 'clean day: no output, exit 0' '[[ ! -s /tmp/r4.txt ]] && ((rc == 0))' || cat /tmp/r4.txt
 

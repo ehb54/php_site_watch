@@ -24,6 +24,9 @@
 #                        like ^/srv/app/cache/, also skips that directory during the scan
 #   --allow-proc REGEX   other expected processes of the PHP account (repeatable)
 #   --allow-peer REGEX   expected network peers as host:port, e.g. a remote database (repeatable)
+#   --ioc TEXT           an indicator of compromise to look for, besides those from CISA's rule for
+#                        PHP2Shell: an address, a domain, a file's MD5, SHA-1 or SHA-256 hash, or any
+#                        other text seen in attack traffic (repeatable)
 #   --config FILE        read options from FILE, one "key = value" per line, # for comments
 #                        (default: /etc/php-site-watch.conf if it exists)
 #   --quiet              print only sections with findings, and nothing if all is clean
@@ -44,14 +47,14 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.9.2';
+our $VERSION = '1.10.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 $ENV{LC_ALL} = 'C';
 
 my %single = map { $_ => 1 } qw(date hours user config mail-from sendmail state-dir log-file);
-my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer mail-to);
+my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer mail-to ioc);
 my %flag   = map { $_ => 1 } qw(quiet alert status last);
 
 my @mon = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
@@ -63,6 +66,30 @@ my $re_fcgi   = qr/proxy_fcgi:error|proxy:error|AH01067|AH01075|reset by peer|up
 my $re_stderr = qr/AH01071|FastCGI sent in stderr/;    # PHP's own messages passed on by Apache or nginx, not failures
 my $re_fatal  = qr/PHP Fatal error:\s+(.*?)(?:\\n|',\s*referer:|"\s*while reading|'?\s*$)/;
 my $re_loop   = qr/^(?:127\.|::1$|::ffff:127\.|localhost$)/;
+
+# CISA's Sigma rule for PHP2Shell (incident 261429.r1.v1, TLP:CLEAR, modified 2026-10-23,
+# https://github.com/cisagov/SIGMA_Rules): the addresses and domains seen attacking, file hashes,
+# and markers of the public exploit and scanning tools. "ioc" lines in the config add more.
+my $cisa_rule = "CISA's Sigma rule 261429 of 2026-10-23";
+my @cisa_iocs = (qw(
+    103.216.220.92 31.223.184.166 37.19.200.5 134.209.159.64 103.114.163.188 95.217.98.37
+    45.198.224.169 92.118.112.100 134.199.154.64 117.55.202.115 85.11.167.243 221.14.159.134
+    109.71.252.97 91.90.123.25
+    thunder.godofthunder.st hackattackkaboom.botlesscucks.st hik.gettingheadfromduckysmom.st
+    b61a098fc62a2c2696e196dca78da71a c472dab4ff7c16782a8037f988d4daa6d4bdb343
+    0c5486f06620e26e316f4b33f318b0d646d5e1133789331aa2fed012360d1486
+    267a3c8ed021a0a52c29bf076617a0dfd5cd5285202b8d0bd9ad0712110ccae8
+    e2529d4afa39ae4db2eb05d5176317c906289abf09660c75bdeec43e54c55aa3
+    150ae88f0999032e2a6113501d6082f54a3ed98d02427b21a96e773a27d7bf16
+    40caf199ca1ebe056a74427f8e9db06c66899e33ae09c0ec2769ec70bf6dd8e7
+    27d926a6708d6769d97d065e7a5a860ab496eab272c03d1cebc55ec71b954fa2
+    1485e14e0f62bc94664eec341cabd275dad7d30b1d496c40ec340c9a0d9f0ba8
+    xqsuvwz3n97wu8j3emz1axuo5y p2s9rdme2st6guc9g0rafic php2shell-scan php2shell-scan/109618 php2shell-verify
+    php2shell-poc B7kQpoc618 B7kQpoc619 BGCTXBOUNDARY
+), './nfs php');
+# The rule also watches for the web server or a PHP worker starting a shell or a download tool
+my $re_tool   = qr{^(?:\S*/)?(?:sh|bash|dash|cmd|powershell|pwsh|python[\d.]*|curl|wget|netcat|nc|ncat|whoami|id|uname)(?:\s|$)};
+my $re_worker = qr{^php-fpm: |^(?:\S*/)?(?:httpd|apache2|php-cgi|lsphp|frankenphp)\b};
 
 my @default_exclude    = (qr{^/var/lib/php/(?:session|opcache)/}, qr{/sess_[\w,-]+$});
 my @default_allow_proc = (qr{^(?:\S*/)?(?:httpd|apache2)\b}, qr{^nginx: }, qr{^php-fpm: }, qr{^(?:\S*/)?(?:php-cgi|lsphp)\b});
@@ -189,6 +216,14 @@ my @exclude    = (@default_exclude,    map { qr/$_/ } @{ $list{exclude} });
 my @skip       = map { m{^\^((?:/(?:[\w-]|\\\.)+)+)/$} ? do { (my $d = $1) =~ s/\\\././g; $d } : () } @{ $list{exclude} };
 my @allow_proc = (@default_allow_proc, map { qr/$_/ } @{ $list{'allow-proc'} });
 my @allow_peer = map { qr/$_/ } @{ $list{'allow-peer'} };
+my @iocs       = (@cisa_iocs, @{ $list{ioc} });
+my %ioc_hash   = map { lc($_) => 1 } grep { /^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i } @iocs;
+my %ioc_addr   = map { lc($_) => 1 } grep { /^\d{1,3}(?:\.\d{1,3}){3}$|^[0-9a-f]*:[0-9a-f:]+$/i } @iocs;
+# an address must not match inside a longer one: 37.19.200.5 is not 37.19.200.55
+my $re_ioc     = do {
+    my $alt = join '|', map { /^[\d.]+$/ ? '(?<![\d.])' . quotemeta($_) . '(?!\.?\d)' : quotemeta($_) } sort { length $b <=> length $a } @iocs;
+    qr/($alt)/i;
+};
 
 # RHEL/Rocky/OL, Remi's parallel php74/php80/... packages, and Debian/Ubuntu layouts
 my @fpm_paths = @{ $list{'fpm-logs'} } ? @{ $list{'fpm-logs'} }
@@ -204,7 +239,7 @@ my @logs = grep { !$seen_file{$_}++ } (log_files(\@fpm_paths, qr/\.log/), log_fi
 my ($first_day) = sort @days;
 my $oldest = (days_from_civil(split /-/, $first_day) - 2) * 86400;    # older files can't hold these days
 my (%hits, %e5, %posts, %fatal, $read);
-$hits{$_} = [] for qw(crash limits fcgi);
+$hits{$_} = [] for qw(crash limits fcgi php2shell);
 
 for my $f (@logs) {
     next if (stat $f)[9] < $oldest;
@@ -214,13 +249,16 @@ for my $f (@logs) {
         my $ld = line_day($l);
         next unless defined $ld && $want{$ld};
         chomp $l;
+        my $sign = php2shell_sign($l);    # before clean(), which shortens long lines
         $l = clean($l);
+        push @{ $hits{php2shell} }, "$sign: $l" if $sign;
         if ($l =~ m{^(\S+) \S+ \S+ \[[^\]]+\] "(\S+) (\S+)[^"]*" (\d{3}) }) {
             my ($ip, $method, $url, $status) = ($1, $2, $3, $4);
             $posts{$ip}++ if $method eq 'POST';
             $e5{"$ip $method $url $status"}++ if $status =~ /^5/;
             next;
         }
+        next if $sign;    # reported above, not again as an ordinary crash or memory error
         if    ($l =~ $re_crash)                         { push @{ $hits{crash} },  $l }
         elsif ($l =~ $re_limits)                        { push @{ $hits{limits} }, $l }
         elsif ($l =~ $re_fatal)                         { $fatal{$1}++ }
@@ -249,20 +287,34 @@ if (@scan) {
         push @warn, cannot_run('find', 'changed files');
     }
 }
-@changed = map { clean(scalar(localtime((stat $_)[9] // 0)) . "  $_") }
-           sort { ((stat $b)[9] // 0) <=> ((stat $a)[9] // 0) } @changed;
+my @signs_now;    # files, processes and connections, as they are now
+my %file_sign = php2shell_files(@changed);
+my $when = sub { clean(scalar(localtime((stat $_[0])[9] // 0)) . "  $_[0]") };
+push @signs_now, map { "$file_sign{$_}: " . $when->($_) } sort keys %file_sign;
+@changed = map { $when->($_) } sort { ((stat $b)[9] // 0) <=> ((stat $a)[9] // 0) } grep { !$file_sign{$_} } @changed;
 
 # Processes in containers can run as the same user ID but belong to someone else's setup; zombies
 # have already exited and are summarized in the health section instead.
-my (%userpid, @procs, $zombies);
-if (my $fh = quiet_open('ps', '-u', $user, '-o', 'pid=,stat=,lstart=,args=')) {
+my (%userpid, @procs, $zombies, %args);
+if (my $fh = quiet_open('ps', '-eo', 'pid=,args=')) {    # to name a process's parent
+    while (<$fh>) { $args{$1} = $2 if /^\s*(\d+)\s+(.*?)\s*$/ }
+    close $fh;
+}
+if (my $fh = quiet_open('ps', '-u', $user, '-o', 'pid=,ppid=,stat=,lstart=,args=')) {
     while (my $l = <$fh>) {
         chomp $l;
-        my ($pid, $stat, $start, $cmd) = $l =~ /^\s*(\d+)\s+(\S+)\s+(\w{3} \w{3} +\d+ [\d:]+ \d{4})\s+(.*)$/ or next;
+        my ($pid, $ppid, $stat, $start, $cmd) = $l =~ /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3} \w{3} +\d+ [\d:]+ \d{4})\s+(.*)$/ or next;
         next if in_other_container($pid);
         if ($stat =~ /^Z/) { $zombies++; next }
         $userpid{$pid} = 1;
-        push @procs, clean("$pid  $start  $cmd") unless grep { $cmd =~ $_ } @allow_proc;
+        next if grep { $cmd =~ $_ } @allow_proc;
+        my $parent = $args{$ppid} // '';
+        if ($cmd =~ $re_tool && $parent =~ $re_worker) {
+            (my $prog = $parent =~ /^(php-fpm|\S+)/ ? $1 : $parent) =~ s{.*/}{};
+            push @signs_now, clean("the web server or PHP started a shell or tool: $pid  $start  $cmd  (parent $ppid, $prog)");
+        } else {
+            push @procs, clean("$pid  $start  $cmd");
+        }
     }
     close $fh;
 } else {
@@ -276,13 +328,19 @@ if (my $fh = quiet_open('ss', '-tanp')) {
         next if $l =~ /^State/;
         my @c = split ' ', $l;
         $sockets++;
-        next unless @c >= 6;
-        $owned++;
+        next unless @c >= 5;
         my ($state, $local, $peer) = @c[0, 3, 4];
         my $who = join ' ', @c[5 .. $#c];
-        next unless grep { $userpid{$_} } $who =~ /pid=(\d+)/g;
         my ($lhost, $lport) = split_hostport($local);
         my ($phost, $pport) = split_hostport($peer);
+        (my $p4 = lc $phost) =~ s/^::ffff://;
+        if ($ioc_addr{$p4}) {    # whoever's socket it is
+            push @signs_now, clean("a connection with an address reported attacking: $state  $local -> $peer" . ($who ? "  $who" : ''));
+            next;
+        }
+        next unless @c >= 6;
+        $owned++;
+        next unless grep { $userpid{$_} } $who =~ /pid=(\d+)/g;
         next if $lport =~ /^(?:80|443)$/;    # visitors talking to the web server
         if ($state eq 'LISTEN') {
             next if $lhost =~ $re_loop;
@@ -306,6 +364,8 @@ if (my $fh = quiet_open('ss', '-tanp')) {
 
 my $day_label = join ' and ', @days;
 my @sections = (
+    { title => "Signs of PHP2Shell exploitation, from $cisa_rule (logs, and files, processes and connections now)",
+      alert => 1, tail => 30, lines => [ @{ $hits{php2shell} }, @signs_now ] },
     { title => 'PHP workers that crashed or died while starting a request', alert => 1, tail => 20, lines => $hits{crash} },
     { title => 'PHP out of memory or time, or worker limit reached', alert => 1, tail => 20, lines => $hits{limits} },
     { title => "FastCGI failures between web server and PHP (PHP's own notices, warnings and scanner noise left out)",
@@ -544,6 +604,8 @@ sub health {
         $containers{$c} = 1 if length $c && $c ne $my_container;
     }
     push @lines, scalar(keys %containers) . ' containers running; their processes are left out of this report' if %containers;
+    push @lines, "PHP2Shell indicators: " . scalar(@cisa_iocs) . " from $cisa_rule"
+               . (@{ $list{ioc} } ? ', ' . scalar(@{ $list{ioc} }) . ' from the config' : '');
     push @lines, "$user has $zombies zombie (defunct) processes; their parent is not collecting them" if $zombies;
     if (defined $scan_secs) {
         push @lines, 'changed files looked for in: ' . join(', ', map { m{^(.+?)/+$} ? $1 : $_ } @scan)
@@ -616,6 +678,48 @@ sub php_release_fixed {
     my %first = ('8.2' => 35, '8.3' => 36, '8.4' => 27, '8.5' => 12);
     return $patch >= $first{"$maj.$min"} if exists $first{"$maj.$min"};
     return $maj > 8 || ($maj == 8 && $min > 5);
+}
+
+# What CISA's rule for PHP2Shell finds in a log line, as a short reason, or undef: a reported address,
+# domain, hash or tool marker; the upload progress field the attack posts; running out of memory
+# before any script started ("in Unknown"), which the attack causes; or web shell code, which a
+# request URL carries encoded.
+sub php2shell_sign {
+    my ($l) = @_;
+    return "reported indicator $1" if $l =~ $re_ioc;
+    return 'the session upload progress field the attack uses' if $l =~ /PHP_SESSION_UPLOAD_PROGRESS/i;
+    return 'out of memory before any script ran, as the attack causes'
+        if $l =~ /PHP Fatal error:/i && $l =~ /Allowed memory/i && $l =~ / in Unknown /i;
+    (my $d = lc $l) =~ tr/+/ /;
+    $d =~ s/%([0-9a-f]{2})/chr hex $1/ge;
+    return 'web shell code' if 6 == grep { index($d, $_) >= 0 } '<', 'php', 'echo', 'system', q{($_get['}, '>';
+    return;
+}
+
+# Changed files that match a reported hash, or hand a request variable straight to a function that
+# runs code or commands, as a web shell such as <?php system($_GET['c']); does. CISA's rule looks
+# for that code in logs; here it is looked for in the files themselves.
+sub php2shell_files {
+    my (%sign, %len);
+    my @files = grep { -f $_ && -s _ <= 100 * 1024 * 1024 } @_;
+    $len{ length $_ } = 1 for keys %ioc_hash;
+    for my $sum (grep { $len{ $_->[1] } } ['md5sum', 32], ['sha1sum', 40], ['sha256sum', 64]) {
+        for (my $i = 0; $i < @files; $i += 200) {
+            my $end = $i + 199 < $#files ? $i + 199 : $#files;
+            for (cmd_lines($sum->[0], '--', @files[$i .. $end])) {
+                my ($hash, $path) = /^\\?([0-9a-f]+) [ *](.*)$/ or next;
+                $sign{$path} = "matches the reported hash $hash" if $ioc_hash{$hash};
+            }
+        }
+    }
+    for my $f (grep { /\.(?:php\d?|phtml|pht|phar|inc)$/i && -s $_ <= 2 * 1024 * 1024 && !$sign{$_} } @files) {
+        open my $fh, '<', $f or next;
+        my $code = do { local $/; <$fh> } // '';
+        close $fh;
+        $sign{$f} = 'web shell code: a request variable run as code or a command'
+            if $code =~ /\b(?:system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec|eval|assert)\s*\(\s*(?:\w+\s*\(\s*)*\$_(?:GET|POST|REQUEST|COOKIE)\b/i;
+    }
+    return %sign;
 }
 
 # A name for the container a process runs in ('' when not in one), taken from its cgroup paths.
