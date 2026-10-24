@@ -95,9 +95,15 @@ echo; echo "######## reboot"
       sleep 0.25
   done ) &
 sleep 1
+# a new boot has a new boot ID; SSH can still answer for a moment while the old system shuts down
+boot_id=$(vm 'cat /proc/sys/kernel/random/boot_id')
 vm 'sudo systemd-run --quiet --on-active=1 systemctl reboot' 2> /dev/null    # a second from now, after this returns
-for i in $(seq 1 30); do vm true 2> /dev/null || break; sleep 2; done    # until it has gone down
-up || exit 9
+for i in $(seq 1 120); do
+    sleep 3
+    now_id=$(vm 'cat /proc/sys/kernel/random/boot_id' 2> /dev/null)
+    [[ -n $now_id && $now_id != "$boot_id" ]] && break
+done
+[[ -n $now_id && $now_id != "$boot_id" ]] || { echo 'the VM did not come back from the reboot; its console:'; tail -20 "$t/console.log"; exit 9; }
 vm 'sudo systemctl is-system-running --wait' > /dev/null 2>&1
 check 'the block came back at boot' '[[ $(vm "sudo /usr/local/sbin/site-lockdown status" | head -1) == "lockdown: on" ]] && vm "sudo tail -1 /var/log/site-lockdown.log" | grep -q "restored the block, whose rules were gone"'
 sl=$(since_boot site-lockdown.service) pre=$(since_boot network-pre.target) ws=$(since_boot $web.service)
