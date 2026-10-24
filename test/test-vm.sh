@@ -31,15 +31,16 @@ sshport=$((20000 + $$ % 20000)) webport=$((40000 + $$ % 20000))
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
 # QEMU's user networking keeps the host's end of a connection open when the guest goes away, so
-# give up on a silent connection rather than wait for it
-vm() { ssh -q -i "$t/key" -p "$sshport" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-           -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 tester@127.0.0.1 "$@"; }
+# give up on a silent connection rather than wait for it; and no command may run longer than
+# $vm_limit seconds (default 300), so nothing in the VM can hold the test up for good
+vm() { timeout "${vm_limit:-300}" ssh -q -i "$t/key" -p "$sshport" -o BatchMode=yes -o StrictHostKeyChecking=no \
+           -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 tester@127.0.0.1 "$@"; }
 # what the host gets from Apache in the VM: an HTTP status, or 000 for nothing
 page() { curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$webport/"; }
 up() {
-    local i
-    for i in $(seq 1 120); do vm true 2> /dev/null && return 0; sleep 3; done
-    echo "the VM did not come up; its console:"; tail -20 "$t/console.log"; return 1
+    local end=$((SECONDS + 900))
+    while ((SECONDS < end)); do vm true 2> /dev/null && return 0; sleep 3; done
+    echo "the VM did not come up in 15 min; its console:"; tail -20 "$t/console.log"; return 1
 }
 since_boot() { vm "systemctl show -p ActiveEnterTimestampMonotonic --value $1"; }
 trap '[[ -s $t/qemu.pid ]] && kill "$(cat "$t/qemu.pid")" 2> /dev/null; rm -rf "$t"' EXIT
@@ -61,7 +62,8 @@ packages: $packages
 runcmd:
   - echo ok > /var/www/html/index.html
   - systemctl enable --now $web
-  - if command -v firewall-cmd; then systemctl enable --now firewalld && firewall-cmd --permanent --add-service=http && firewall-cmd --reload; fi
+  # firewall-cmd right after firewalld starts can hang on D-Bus (Rocky 8), so set it up before
+  - if command -v firewall-cmd; then if systemctl is-active -q firewalld; then firewall-cmd -q --permanent --add-service=http && firewall-cmd -q --reload; else firewall-offline-cmd --add-service=http && systemctl enable --now firewalld; fi; fi
 EOF
 printf 'instance-id: psw-%s\nlocal-hostname: psw-%s\n' $$ "$name" > "$t/meta-data"
 genisoimage -quiet -output "$t/seed.iso" -volid cidata -joliet -rock "$t/user-data" "$t/meta-data" || exit 9
@@ -70,7 +72,12 @@ genisoimage -quiet -output "$t/seed.iso" -volid cidata -joliet -rock "$t/user-da
     -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:$sshport-:22,hostfwd=tcp:127.0.0.1:$webport-:80" \
     -device virtio-net-pci,netdev=n0 -pidfile "$t/qemu.pid" -daemonize || exit 9
 up || exit 9
-vm 'sudo cloud-init status --wait' > /dev/null 2>&1
+# cloud-init installs the packages; give it 15 minutes
+vm_limit=960 vm 'sudo timeout 900 cloud-init status --wait' > /dev/null 2>&1
+if [[ $(vm 'sudo cloud-init status' 2> /dev/null) != *done* ]]; then
+    echo "cloud-init did not finish in 15 min: $(vm 'sudo cloud-init status' 2>&1)"; vm 'sudo tail -20 /var/log/cloud-init-output.log'
+    tail -10 "$t/console.log"; exit 9
+fi
 fw=0
 vm 'systemctl is-active -q firewalld' && fw=1
 echo "######## $(vm '. /etc/os-release; echo $PRETTY_NAME'), kernel $(vm 'uname -r'), $(vm 'systemctl --version | head -1')$( ((fw)) && echo ", firewalld $(vm 'sudo firewall-cmd --version')")"
@@ -95,10 +102,17 @@ echo; echo "######## reboot"
       sleep 0.25
   done ) &
 sleep 1
+# a new boot has a new boot ID; SSH can still answer for a moment while the old system shuts down
+boot_id=$(vm 'cat /proc/sys/kernel/random/boot_id')
 vm 'sudo systemd-run --quiet --on-active=1 systemctl reboot' 2> /dev/null    # a second from now, after this returns
-for i in $(seq 1 30); do vm true 2> /dev/null || break; sleep 2; done    # until it has gone down
-up || exit 9
-vm 'sudo systemctl is-system-running --wait' > /dev/null 2>&1
+end=$((SECONDS + 900))
+while ((SECONDS < end)); do
+    sleep 3
+    now_id=$(vm 'cat /proc/sys/kernel/random/boot_id' 2> /dev/null)
+    [[ -n $now_id && $now_id != "$boot_id" ]] && break
+done
+[[ -n $now_id && $now_id != "$boot_id" ]] || { echo 'the VM did not come back from the reboot in 15 min; its console:'; tail -20 "$t/console.log"; exit 9; }
+vm 'sudo timeout 240 systemctl is-system-running --wait' > /dev/null 2>&1
 check 'the block came back at boot' '[[ $(vm "sudo /usr/local/sbin/site-lockdown status" | head -1) == "lockdown: on" ]] && vm "sudo tail -1 /var/log/site-lockdown.log" | grep -q "restored the block, whose rules were gone"'
 sl=$(since_boot site-lockdown.service) pre=$(since_boot network-pre.target) ws=$(since_boot $web.service)
 echo "boot: site-lockdown.service at $((sl / 1000)) ms, network-pre.target +$(((pre - sl) / 1000)) ms, $web +$(((ws - sl) / 1000)) ms$( ((fw)) && echo ", firewalld $(((sl - $(since_boot firewalld.service)) / 1000)) ms before it")"

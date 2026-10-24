@@ -17,7 +17,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.9.2';
+our $VERSION = '1.10.0';
 
 # taint mode: nothing from the environment or the request is used before it has been checked
 $ENV{PATH} = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';

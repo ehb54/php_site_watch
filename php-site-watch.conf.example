@@ -29,6 +29,12 @@
 # Expected connections to other machines, as host:port (for example a database server).
 # allow-peer = ^10\.0\.0\.5:3306$
 
+# Indicators of compromise to look for besides those from CISA's rule for PHP2Shell, which are
+# built in: an address, a domain, a file's MD5, SHA-1 or SHA-256 hash, or any text seen in attack
+# traffic, one per line.
+# ioc = 192.0.2.10
+# ioc = evil.example
+
 # Where --alert and --status mail goes (one address per line, or comma-separated), and the sender
 # address if your relay needs one. "setup.sh mail add/remove/from" maintains these lines.
 # mail-to = you@example.org

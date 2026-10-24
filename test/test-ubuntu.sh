@@ -54,7 +54,7 @@ generic=$(mkdeb generic php-common 2:75 $fx/php7.4-unfixed.changelog)
 # keep the fixtures' changelogs whatever this image leaves out of /usr/share/doc
 echo 'path-include=/usr/share/doc/php*/changelog.Debian.gz' > /etc/dpkg/dpkg.cfg.d/zz-php-site-watch-test
 
-check 'no PHP packages: no fix line' '! health | grep -q PHP2Shell'
+check 'no PHP packages: no fix line' '! health | grep -q "PHP2Shell fix"'
 dpkg -i "$fixed74" > /dev/null 2>&1
 health > /tmp/h1.txt; cat /tmp/h1.txt
 check 'fixed build: yes' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php7.4-common 7.4.3-4ubuntu2.29+esm5: yes" /tmp/h1.txt && ! grep -q "^!! php7.4" /tmp/h1.txt'

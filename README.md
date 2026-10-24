@@ -15,6 +15,10 @@ for any PHP site.
 
 It reports:
 
+- signs of PHP2Shell exploitation, from [CISA's detection rule](#php2shell-signs-from-cisas-rule):
+  the addresses, domains, file hashes and tool markers CISA reports, the request field the attack
+  posts, the out-of-memory error it causes, web shell code in requests and in changed files, and
+  the web server or PHP starting a shell or download tool
 - PHP workers that crashed (`SIGSEGV`, `SIGBUS`, `SIGABRT`) or died while starting a request,
   from php-fpm logs and from Apache when it runs PHP itself (mod_php)
 - PHP running out of memory or time, and php-fpm reaching its worker limit
@@ -178,6 +182,7 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 | `--exclude REGEX` | changed files to ignore (repeatable); one naming a whole directory, like `^/srv/app/cache/`, also skips that directory during the scan |
 | `--allow-proc REGEX` | other expected processes of the PHP account (repeatable) |
 | `--allow-peer REGEX` | expected connections to other machines, as host:port (repeatable) |
+| `--ioc TEXT` | an indicator of compromise to look for besides CISA's: an address, domain, file hash (MD5, SHA-1 or SHA-256) or any text seen in attack traffic (repeatable) |
 | `--config FILE` | config file (default: `/etc/php-site-watch.conf` if it exists) |
 | `--quiet` | print only sections with findings |
 | `--alert` | report only findings not reported before, from today and yesterday |
@@ -210,6 +215,10 @@ yourself with `scan` lines.
 - **Usually harmless:** an occasional out-of-memory or time-limit error from a known page, 5xx
   responses to scanners, and files your applications normally write. Add those to `exclude` once
   you know them, so they stop being reported.
+- **Act at once:** anything under "Signs of PHP2Shell exploitation". A reported address or tool
+  marker in the logs may only be a scan of a patched server; a web shell file, a shell started by
+  PHP, or a connection with a reported address means the server needs looking into now, and
+  [`site-lockdown`](#emergency-lockdown) can take it off the net meanwhile.
 - **Worth a closer look:** crashed workers, especially several within seconds; FastCGI errors
   next to POSTs from the same client; new `.php` files in web directories or anything in `/tmp`
   or `/dev/shm`; processes or listening sockets of the PHP account you don't recognize; and
@@ -219,6 +228,26 @@ yourself with `scan` lines.
   to pick up an update, an Apache with mod_php that needs a stop and start for it, a lockdown
   that is on (or on with its rules gone), and a key for the `fleet` user that isn't limited to
   `fleet-agent`.
+
+## PHP2Shell signs, from CISA's rule
+
+CISA published a [Sigma detection rule](https://github.com/cisagov/SIGMA_Rules) for PHP2Shell
+(incident 261429, TLP:CLEAR, last changed 2026-10-23). php-site-watch looks for what it describes
+in the places a server keeps it:
+
+| CISA's rule looks for | php-site-watch checks |
+|---|---|
+| 14 addresses and 3 domains seen attacking, 10 file hashes, and markers of the public exploit and scanning tools (`php2shell-scan`, `B7kQpoc618`, `BGCTXBOUNDARY`, ...) | every web and PHP log line it reads (an address must match whole: `37.19.200.5` is not `37.19.200.55`); current connections, whoever's they are; and the files the PHP account changed, by MD5, SHA-1 and SHA-256 |
+| `PHP_SESSION_UPLOAD_PROGRESS`, the upload progress field the attack posts | every log line; it shows up where request bodies are logged, as by ModSecurity, not in plain access logs |
+| `PHP Fatal error: ... Allowed memory ... in Unknown`: running out of memory before any script started, which the attack causes | every PHP and web server error log line, reported here instead of with ordinary memory errors |
+| web shell code, `<?php echo system($_GET['...` | every log line, decoded first, since a request URL carries it encoded; and changed `.php` files that hand `$_GET`, `$_POST`, `$_REQUEST` or `$_COOKIE` straight to `system`, `exec`, `eval` and the like |
+| the web server or a PHP worker (`php-fpm`, `httpd`, `apache2`, `php-cgi`) starting a shell or a tool such as `curl`, `wget`, `nc`, `python` or `whoami` | the PHP account's running processes, by their parent, unless an `allow-proc` line expects them |
+
+The findings go in their own section at the top of every report and in the hourly alerts. When
+CISA or someone else reports more indicators, add them to `/etc/php-site-watch.conf` without
+waiting for a new version, one per line: `ioc = 192.0.2.10`, `ioc = evil.example`, or a file's
+hash. The health section says how many indicators are in use. A shell or download that starts and
+finishes between two runs is not seen; the log and file checks don't have that gap.
 
 ## The PHP2Shell fix check
 
@@ -462,6 +491,11 @@ bash test/test-vm.sh rocky9   # or rocky8, rocky10, ubuntu24.04
 ```
 
 ## Versions
+
+- **1.10.0:** signs of PHP2Shell exploitation from CISA's Sigma rule 261429: its addresses,
+  domains, hashes and tool markers in the logs, connections and changed files, the upload progress
+  field, out-of-memory errors "in Unknown", web shell code in requests and files, and shells or
+  tools started by the web server or PHP; `ioc` adds indicators
 
 - **1.9.2:** `site-lockdown.service` is also ordered before httpd, apache2, nginx, MariaDB/MySQL and
   Docker, which otherwise only wait for `network.target` and could start first where nothing
