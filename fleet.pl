@@ -563,6 +563,8 @@ sub plan {
     my $s = '';
     if ($software) {
         if ($f->{clone}) {
+            fail("~/$clone on $name is not on a branch, so git pull cannot update it; put it back on main first: git -C ~/$clone checkout main")
+                if ($f->{clone_branch} // '') eq 'HEAD';
             push @{ $p->{notes} }, "~/$clone is on branch $f->{clone_branch}, not main" if $f->{clone_branch} && $f->{clone_branch} ne 'main';
             push @{ $p->{notes} }, "~/$clone comes from $f->{clone_origin}, not $want->{repo}" if repo_id($f->{clone_origin}) ne repo_id($want->{repo});
             push @{ $p->{hand} }, "~/$clone has $f->{clone_changes} changed file(s), so git pull may refuse; look at them (git -C ~/$clone status)" if $f->{clone_changes};

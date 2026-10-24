@@ -1,13 +1,14 @@
 #!/bin/bash
 # fleet.pl in throwaway containers on a network of their own: a person's machine (adm) and two
 # servers with sshd and sudo, one with Apache (s1) and one with nginx (s2). It checks the inventory
-# checks; add's refusals (no profile, no sudo, nobody to ask, a broken inventory) and --dry-run,
-# which change nothing; add itself (a clone, the lims profile's config, cron, the recipients, the
-# control hosts' keys, lockdown-allow, a first check and a test mail, the sites found in Apache's
-# and nginx's config and picked at the prompt, the section it writes); add again, which changes
-# nothing; editing a section without losing its comments; sync after control hosts and recipients
-# change in the inventory; list; and remove. From the repository directory, on a machine with
-# podman or docker (it creates and removes three containers and a network named psw-fleet-*):
+# checks; add's refusals (no profile, no sudo, nobody to ask, a broken inventory, a clone not on a
+# branch) and --dry-run, which change nothing; add itself (a clone, the lims profile's config,
+# cron, the recipients, the control hosts' keys, lockdown-allow, a first check and a test mail,
+# the sites found in Apache's and nginx's config and picked at the prompt, the section it writes);
+# add again, which changes nothing; editing a section without losing its comments; sync after
+# control hosts and recipients change in the inventory; list; and remove. From the repository
+# directory, on a machine with podman or docker (it creates and removes three containers and a
+# network named psw-fleet-*):
 #   bash test/test-fleet.sh                    (Rocky 9; or name another image, such as
 #   bash test/test-fleet.sh quay.io/rockylinux/rockylinux:8   or   docker.io/library/ubuntu:24.04)
 set -u
@@ -79,8 +80,12 @@ for c in "$s1" "$s2"; do
              for u in admin plain; do install -d -m 700 -o \$u /home/\$u/.ssh; echo '$pub' > /home/\$u/.ssh/authorized_keys; chown \$u /home/\$u/.ssh/authorized_keys; done
              echo 'admin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/admin
              printf '#!/bin/sh\ncat >> /var/log/test-mail\n' > /usr/sbin/sendmail; chmod 755 /usr/sbin/sendmail
-             cp -a /s /opt/src && cd /opt/src && { [ -d .git ] || git init -q; } && git add -A \
-                 && git -c user.name=test -c user.email=test@example.org commit -q --allow-empty -m snapshot && chown -R admin /opt/src" > /dev/null
+             # the snapshot: a copy root owns (the checkout may be another user's, as on GitHub's
+             # runners, which git refuses to work in), committed on main (it may be a detached
+             # checkout), then the admin's, to clone from
+             cp -r /s /opt/src && cd /opt/src && { [ -d .git ] || git init -q; } && git add -A \
+                 && git -c user.name=test -c user.email=test@example.org commit -q --allow-empty -m snapshot \
+                 && git checkout -q -B main && chown -R admin /opt/src" > /dev/null || { echo "cannot set up $c"; exit 9; }
 done
 apache_dir=$(on "$s1" '[ -d /etc/httpd/conf.d ] && echo /etc/httpd/conf.d || echo /etc/apache2/sites-enabled')
 on_in "$s1" "cat > $apache_dir/fleet-test.conf" <<'EOF'
@@ -172,6 +177,12 @@ out=$sec
 check 'the section it wrote' '[[ $(grep -v "^added = " <<< "$sec" | paste -sd"|") == "[s1.example.org]|ssh = s1|profile = lims|groups = test|site = https://a.example.org/|site = http://b.example.org/" ]] && grep -qx "added = $(on "$adm" "date +%F") by root with fleet $version" <<< "$sec"'
 out=$(fleet check)
 check 'and the inventory still checks' 'grep -qx "inventory.conf is fine: 1 server(s), 2 control host(s)" <<< "$out"'
+
+# a clone that is not on a branch, which git pull cannot update
+on "$s1" 'runuser -u admin -- git -C /home/admin/php_site_watch checkout -q --detach'
+out=$(fleet add s1.example.org --yes); rc=$?
+check 'a clone not on a branch: says how to fix it, before changing anything' '((rc == 1)) && grep -q "^fleet: ~/php_site_watch on s1.example.org is not on a branch, so git pull cannot update it; put it back on main first" <<< "$out" && ! grep -q "^-- " <<< "$out"'
+on "$s1" 'runuser -u admin -- git -C /home/admin/php_site_watch checkout -q main'
 
 echo; echo "######## add again: in line already"
 on "$adm" 'cp /inv/inventory.conf /inv/before'
