@@ -29,7 +29,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.10.0';
+our $VERSION = '1.11.0';
 
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 $ENV{LC_ALL} = 'C';

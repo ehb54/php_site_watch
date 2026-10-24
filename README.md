@@ -45,7 +45,8 @@ Two companions come with it, for when something is found:
 [`site-lockdown`](#emergency-lockdown), an emergency switch that blocks the web ports (and MySQL on
 request) from everywhere but your own addresses, and [`fleet-agent`](#fleet-control-hosts), the one
 command a fleet control host may run on the server: it reads reports and can turn the lockdown on,
-never off.
+never off. For many servers, [`fleet.pl`](#fleet-inventory) keeps them in one inventory and sets
+each one up from it, run by a person from their own machine.
 
 ## Requirements
 
@@ -420,6 +421,66 @@ ssh fleet@server lockdown on --mysql CVE-2026-12345 exploited, no fix yet
 The daily status report lists the control hosts (`fleet control hosts: ctl1 (from 203.0.113.10)`)
 and flags any key of the `fleet` user that isn't limited this way.
 
+## Fleet inventory
+
+`fleet.pl` keeps the servers, and the control hosts allowed on them, in one inventory file, and
+sets each server up from it over SSH. A person runs it from their own machine (macOS or Linux,
+with only Perl and `ssh`), logging in with their own key and using sudo there. Control hosts can't
+install anything or change settings, so adding, changing and removing servers stays with people.
+
+Start the inventory from [`inventory.conf.example`](inventory.conf.example), in a private git
+repository: it says which servers there are and how they are reached. fleet edits the file but
+never commits, so each change can be looked over first.
+
+```bash
+mkdir fleet-inventory && cd fleet-inventory && git init
+cp ~/php_site_watch/inventory.conf.example inventory.conf
+ln -s ~/php_site_watch/fleet.pl ~/bin/fleet    # or run perl ~/php_site_watch/fleet.pl
+```
+
+It has the same `key = value` lines as the server's config, in sections:
+
+| Section | What it holds |
+|---|---|
+| `[defaults]` | settings for every server, unless the server's own section sets them: `mail-to`, `mail-from`, `profile`, `groups`, `lockdown-allow`, `repo` |
+| `[controller NAME]` | a control host: the addresses it connects `from`, and its public `key` |
+| `[uslims.example.org]` | a server, by the host name control hosts reach it at: how a person reaches it (`ssh`), its `profile`, `groups`, each `site` to check from outside, and `contact`, `cloud` and `notes` for people |
+
+The profile says how a server starts out: `lims` gets [`examples/us3lims.conf`](examples/us3lims.conf),
+while `vhost` (Apache or nginx with its own sites) and `genapp` (sites in GenApp containers) are
+set up by hand after the first report.
+
+```bash
+fleet add uslims.example.org --ssh uslims --profile lims --dry-run   # what it would do
+fleet add uslims.example.org --ssh uslims --profile lims
+fleet sync              # every server back in line with the inventory's control hosts and recipients
+fleet list              # or: fleet list --group lims
+fleet check             # what is wrong with the inventory, by line
+fleet remove uslims.example.org --uninstall
+```
+
+`fleet add` first looks at the server without changing anything, then says what it will do and
+asks. It:
+
+- clones php_site_watch into the login's `~/php_site_watch` (or updates that clone), and runs
+  `setup.sh install --cron`
+- for a server with no settings yet, puts the profile's config in place, and otherwise says which
+  of the profile's settings the server's config lacks
+- makes the report recipients those of the inventory, adds each `[controller]` with
+  `setup.sh controller add`, and removes the control hosts that are no longer in the inventory
+- adds the `lockdown-allow` addresses to `/etc/site-lockdown.conf`
+- finds the sites in Apache's (`httpd -S`) or nginx's (`nginx -T`) config and asks which to keep
+  for the outside checks, leaving out aliases and `www.` twins (`--site URL` names them instead)
+- runs a first check, and mails a test report when it installed php-site-watch (or with
+  `--mail-test`)
+- writes the server's section in the inventory
+
+Run it again on a server already in the inventory to bring that server back in line, with the
+latest php-site-watch. `fleet sync` does the same for the recipients, control hosts and
+`lockdown-allow` addresses only, on every server or those named: to take a control host's key off
+every server, delete its section and run `fleet sync`. Where sshd only lets listed users log in,
+fleet says which `AllowUsers` line to add rather than editing `sshd_config` itself.
+
 ## Tests
 
 Every pull request and push to `main` runs the static checks and the container suites below on
@@ -433,7 +494,7 @@ real VMs with the block on. The static checks also run anywhere:
 
 ```bash
 # perl syntax (fleet-agent in taint mode), no modules beyond strict and warnings, one version in
-# the three scripts and the README, shellcheck, and systemd-analyze verify on the units
+# the four scripts and the README, shellcheck, and systemd-analyze verify on the units
 bash test/lint.sh
 ```
 
@@ -471,14 +532,18 @@ podman run --rm -q -v "$PWD:/s:ro,z" docker.io/library/ubuntu:22.04 bash /s/test
 bash test/test-docker.sh      # or: bash test/test-docker.sh ubuntu:20.04
 ```
 
-`site-lockdown` and `fleet-agent` need a network of containers, so their test also runs on the
-container host itself, with podman or docker (it creates and removes three containers and a
-network):
+`site-lockdown`, `fleet-agent` and `fleet.pl` need a network of containers, so their tests also
+run on the container host itself, with podman or docker (each creates and removes three containers
+and a network):
 
 ```bash
 # the block seen from another container, allowed addresses, enforce, and fleet-agent over SSH:
 # what a control host may and may not do, its address limit, the health lines, uninstall
 bash test/test-lockdown.sh    # Rocky 9; or name an image, e.g. docker.io/library/ubuntu:20.04
+# fleet.pl from a person's machine to two servers, one with Apache and one with nginx: the
+# inventory checks, add's refusals and --dry-run, add, add again, sync after the control hosts
+# and recipients change, the sites found and picked at the prompt, list, and remove
+bash test/test-fleet.sh       # Rocky 9; or another image, e.g. docker.io/library/debian:12-slim
 # site-lockdown under a real systemd, booted in a privileged container with Apache and, on Rocky,
 # firewalld: the units, firewall-cmd --reload, systemctl restart firewalld, the timer, and a
 # restart of the container like a reboot, with another container probing port 80 throughout
@@ -491,6 +556,10 @@ bash test/test-vm.sh rocky9   # or rocky8, rocky10, ubuntu24.04
 ```
 
 ## Versions
+
+- **1.11.0:** `fleet.pl`, for the servers' inventory: `fleet add` sets a server up from it (php-site-watch,
+  the profile's config, report recipients, control host keys, lockdown-allow addresses, the sites to
+  check from outside), `sync` brings servers back in line with it, and `remove`, `list` and `check`
 
 - **1.10.0:** signs of PHP2Shell exploitation from CISA's Sigma rule 261429: its addresses,
   domains, hashes and tool markers in the logs, connections and changed files, the upload progress

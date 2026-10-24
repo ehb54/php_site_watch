@@ -1,0 +1,47 @@
+# inventory.conf: the servers that fleet looks after, and the fleet control hosts. Copy it into a
+# private git repository and fill it in; fleet add writes the servers' sections, and fleet check
+# says what is wrong. One "key = value" per line; # starts a comment. Keep it private: it says
+# which servers there are and how they are reached.
+
+# Settings for every server, unless its own section sets them too (then the server's win).
+[defaults]
+# Who gets each server's hourly alerts and daily status reports, comma-separated.
+# mail-to = webmaster@example.org
+# Sender of those reports (default: the server's own address).
+# mail-from = php-site-watch@example.org
+# The usual profile, and groups every server is in.
+# profile = lims
+# groups = example-university
+# Addresses that still reach the web ports during a lockdown (written to /etc/site-lockdown.conf).
+# lockdown-allow = 203.0.113.7, 198.51.100.0/24
+# Where servers get php_site_watch from (default https://github.com/ehb54/php_site_watch).
+# repo = https://github.com/ehb54/php_site_watch
+
+# A fleet control host: fleet add lets it log in to every server as the fleet user, from these
+# addresses, with this key, which can only run fleet-agent (reports, package lists, lockdown on).
+# Delete a section and run fleet sync to take that control host's key off every server.
+# [controller ctl-js2]
+# from = 203.0.113.10
+# key = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... fleet@ctl-js2
+
+# One section per server, named by the host name the control hosts reach it at.
+# [uslims.example.org]
+# How a person reaches it with SSH: a name from ~/.ssh/config, a host, or user@host (default:
+# the section's name). That login needs sudo without a password, or must be root.
+# ssh = uslims
+# The address control hosts use, if the section's name doesn't lead there.
+# address = 192.0.2.20
+# lims: an UltraScan LIMS, set up from examples/us3lims.conf; vhost: Apache or nginx with one or
+# more sites, set up by hand; genapp: a host whose sites run in GenApp containers.
+# profile = lims
+# Groups for picking servers out, such as a site or a funding source.
+# groups = example-university, jetstream2
+# Sites to check from outside, one per line (fleet add finds them in the web server's config).
+# site = https://uslims.example.org/uslims3/
+# Who to call when only the network can block it, and its cloud server (informational for now).
+# contact = network operations, +1 555 0100
+# cloud = jetstream2 4f2c1e9a-0000-0000-0000-000000000000
+# Anything else worth knowing; may be given more than once.
+# notes = MySQL is open to UltraScan desktop clients
+# Written by fleet add: when and by whom.
+# added = 2026-10-24 by someone with fleet 1.11.0

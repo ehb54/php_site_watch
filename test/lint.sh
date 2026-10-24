@@ -2,16 +2,16 @@
 # Static checks, run by CI on every pull request; from the repository directory: bash test/lint.sh
 # Perl syntax (fleet-agent in taint mode); no modules beyond strict and warnings, since EL9 and
 # EL10 package the others separately (perl-POSIX, perl-Socket, ...) and a minimal server may lack
-# them; the same version in all three scripts and at the top of the README's Versions; shellcheck
+# them; the same version in all four scripts and at the top of the README's Versions; shellcheck
 # on the shell scripts; and systemd-analyze verify on the units. shellcheck and systemd-analyze
 # are skipped, with a note, where they are not installed.
 set -u
 cd "$(dirname "$0")/.." || exit 9
 fail=0
 check() { if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; fail=1; fi; }
-scripts=(php-site-watch.pl site-lockdown.pl fleet-agent.pl)
+scripts=(php-site-watch.pl site-lockdown.pl fleet-agent.pl fleet.pl)
 
-for s in php-site-watch.pl site-lockdown.pl; do
+for s in php-site-watch.pl site-lockdown.pl fleet.pl; do
     check "$s: perl syntax" 'perl -c "$s" 2> /dev/null'
 done
 check 'fleet-agent.pl: perl syntax in taint mode' 'perl -cT fleet-agent.pl 2> /dev/null'

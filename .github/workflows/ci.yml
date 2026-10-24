@@ -129,6 +129,29 @@ jobs:
           done
       - run: bash test/test-lockdown.sh "$IMAGE"
 
+  fleet:
+    name: test-fleet ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: rocky8,      image: quay.io/rockylinux/rockylinux:8 }
+          - { name: rocky9,      image: quay.io/rockylinux/rockylinux:9 }
+          - { name: rocky10,     image: quay.io/rockylinux/rockylinux:10 }
+          - { name: ubuntu22.04, image: docker.io/library/ubuntu:22.04 }
+          - { name: ubuntu24.04, image: docker.io/library/ubuntu:24.04 }
+          - { name: debian12,    image: docker.io/library/debian:12-slim }
+    env:
+      IMAGE: ${{ matrix.image }}
+      CONTAINER_RT: docker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash test/test-fleet.sh "$IMAGE"
+
   docker:
     name: test-docker
     runs-on: ubuntu-24.04
