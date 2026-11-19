@@ -40,7 +40,7 @@ if [[ -z $old ]] && ((minor > 0)); then
     [[ -n $old ]] && echo "using php-fpm $old from the Rocky $prev vault"
 fi
 [[ -n $old ]] || { echo "no php-fpm matching $old_re in the repositories or the vault"; exit 9; }
-dnf -y -q install httpd "php-fpm-$old" "php-common-$old" perl-interpreter procps-ng iproute findutils gzip postfix > /dev/null 2>&1 || exit 9
+dnf -y -q install httpd "php-fpm-$old" "php-common-$old" "php-cli-$old" perl-interpreter procps-ng iproute findutils gzip postfix > /dev/null 2>&1 || exit 9
 rpm -q php-fpm httpd perl-interpreter postfix
 
 postconf -e "myhostname = el${el}test.example.org" 'inet_interfaces = loopback-only' 'maillog_file = /var/log/maillog'
@@ -73,9 +73,10 @@ check 'crashed workers reported' 'grep -qE "exited on signal 11 \(SIGSEGV( - cor
 check 'real out-of-memory error reported' 'grep -q "Allowed memory size of 8388608 bytes exhausted" /tmp/r1.txt'
 check 'FastCGI errors reported, scanner noise left out' 'grep -q AH01067 /tmp/r1.txt && grep -q "reset by peer" /tmp/r1.txt && ! grep -q AH01071 /tmp/r1.txt'
 check "health shows PHP ${old%%-*} and the missing fix" 'grep -qF "PHP: PHP ${old%%-*} (/usr/sbin/php-fpm)" /tmp/r1.txt && grep -qF "!! php-fpm-$old" /tmp/r1.txt && grep -q " lacks the PHP2Shell fix" /tmp/r1.txt'
+check 'old build lacks the 2026-11-19 fixes; the upload progress setting is shown' 'grep -F "2026-11-19 PHP fixes (CVE-2026-129289/129496/126714/115560) in php-fpm-$old" /tmp/r1.txt | grep -q ": NO$" && grep -F "!! php-fpm-$old" /tmp/r1.txt | grep -q " lacks the 2026-11-19 PHP fixes$" && grep -qxF "session.upload_progress.enabled: On (php command)" /tmp/r1.txt'
 
 echo; echo "######## after updating php-fpm without restarting it"
-dnf -y -q update php-fpm php-common > /dev/null 2>&1
+dnf -y -q update php-fpm php-common php-cli > /dev/null 2>&1
 rpm -q php-fpm
 perl /s/php-site-watch.pl > /tmp/r2.txt
 sed -n '/== Server health/,$p' /tmp/r2.txt

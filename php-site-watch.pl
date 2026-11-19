@@ -47,7 +47,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.11.0';
+our $VERSION = '1.12.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -66,6 +66,25 @@ my $re_fcgi   = qr/proxy_fcgi:error|proxy:error|AH01067|AH01075|reset by peer|up
 my $re_stderr = qr/AH01071|FastCGI sent in stderr/;    # PHP's own messages passed on by Apache or nginx, not failures
 my $re_fatal  = qr/PHP Fatal error:\s+(.*?)(?:\\n|',\s*referer:|"\s*while reading|'?\s*$)/;
 my $re_loop   = qr/^(?:127\.|::1$|::ffff:127\.|localhost$)/;
+
+# PHP security fixes the health section looks for. Distributions backport fixes without changing
+# PHP's own version (7.4.33 stays 7.4.33), so a package counts as fixed when its changelog names one
+# of the CVEs. Packages that follow PHP's own releases instead (RHEL 10 and Rocky 10, whose
+# changelogs say only "rebase to 8.3.36", or Remi's and Ondrej Sury's) count as fixed from PHP's
+# first release with the fix in their branch (first); branches newer than those have it from the
+# start. Older branches (7.4, 8.0, 8.1) get fixes only as distribution backports. While a fix is
+# missing, the line in ini names a setting worth knowing about until it arrives.
+my @php_fixes = (
+    {   label => 'PHP2Shell fix (CVE-2026-109618/109619)', short => 'the PHP2Shell fix',    # GHSA-w8hw-w9fx-j79w, GHSA-6wmf-4rv5-p3rp
+        cves  => [qw(CVE-2026-109618 CVE-2026-109619)],
+        first => { '8.2' => 35, '8.3' => 36, '8.4' => 27, '8.5' => 12 } },
+    # PHP's critical advisories of 2026-11-19 that reach the 8.2 branch: FPM request smuggling,
+    # timezone cache use-after-free, partially overwritten session files, session serializer mismatch
+    {   label => '2026-11-19 PHP fixes (CVE-2026-129289/129496/126714/115560)', short => 'the 2026-11-19 PHP fixes',
+        cves  => [qw(CVE-2026-129289 CVE-2026-129496 CVE-2026-126714 CVE-2026-115560)],
+        first => { '8.2' => 36, '8.3' => 37, '8.4' => 28, '8.5' => 13 },
+        ini   => 'session.upload_progress.enabled' },    # the remote route to both session flaws
+);
 
 # CISA's Sigma rule for PHP2Shell (incident 261429.r1.v1, TLP:CLEAR, modified 2026-10-23,
 # https://github.com/cisagov/SIGMA_Rules): the addresses and domains seen attacking, file hashes,
@@ -536,7 +555,7 @@ sub show_last {
 
 # Basic server health for --status and normal reports: returns the section and the problems found.
 sub health {
-    my (@lines, @problems);
+    my (@lines, @problems, %missing_ini);
     my $cpus = 0;
     if (open my $fh, '<', '/proc/cpuinfo') { $cpus = grep { /^processor\s*:/ } <$fh> }
     my ($up)  = split ' ', (first_line('/proc/uptime') // '0');
@@ -627,11 +646,15 @@ sub health {
             my $pkg = cmd_out('rpm', '-qf', $exe);
             if ($pkg && $pkg !~ /not owned|^error/) {
                 my $version = cmd_out('rpm', '-q', '--qf', '%{VERSION}', $pkg) // '';
-                my $fixed   = (grep { /CVE-2026-109618/ } cmd_lines('rpm', '-q', '--changelog', $pkg)) ? 'yes'
-                            : php_release_fixed($version) ? "yes ($version is a PHP release with the fix)"
-                            : 'NO';
-                push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg: $fixed";
-                push @problems, "$pkg lacks the PHP2Shell fix" if $fixed eq 'NO';
+                my @log     = cmd_lines('rpm', '-q', '--changelog', $pkg);
+                for my $fix (@php_fixes) {
+                    my $fixed = fix_state($fix, $version, \@log);
+                    push @lines, "$fix->{label} in $pkg: $fixed";
+                    if ($fixed eq 'NO') {
+                        push @problems, "$pkg lacks $fix->{short}";
+                        $missing_ini{ $fix->{ini} } = 1 if $fix->{ini};
+                    }
+                }
             }
         }
     }
@@ -654,30 +677,54 @@ sub health {
         for (cmd_lines('dpkg-query', '-W', '-f', '${Package} ${Version} ${Status}\n', 'php*-common')) {
             my ($pkg, $version) = /^(php\d[\d.]*-common) (\S+) \S+ \S+ (?:installed|unpacked|half-configured|triggers-\w+)$/ or next;
             my $changelog = "/usr/share/doc/$pkg/changelog.Debian.gz";
-            my $fixed     = 'unknown (no changelog)';
+            my ($upstream) = $version =~ /^(?:\d+:)?(\d+\.\d+\.\d+)/;
+            my @log;
+            my $no_log = 'unknown (no changelog)';
             if (-e $changelog) {
-                my @log = cmd_lines('gzip', '-dc', '--', $changelog);
-                $fixed = !@log ? "unknown (cannot read $changelog)" : (grep { /CVE-2026-109618/ } @log) ? 'yes' : 'NO';
+                @log    = cmd_lines('gzip', '-dc', '--', $changelog);
+                $no_log = @log ? undef : "unknown (cannot read $changelog)";
             }
-            # packages that follow PHP's own releases, such as Ondrej Sury's, show the fix in the version
-            $fixed = "yes ($1 is a PHP release with the fix)"
-                if $fixed ne 'yes' && $version =~ /^(?:\d+:)?(\d+\.\d+\.\d+)/ && php_release_fixed($1);
-            push @lines, "PHP2Shell fix (CVE-2026-109618/109619) in $pkg $version: $fixed";
-            push @problems, "$pkg $version lacks the PHP2Shell fix" if $fixed eq 'NO';
+            for my $fix (@php_fixes) {
+                # without a changelog only the version can tell, as for Ondrej Sury's packages
+                my $fixed = fix_state($fix, $upstream, \@log);
+                $fixed = $no_log if $fixed eq 'NO' && defined $no_log;
+                push @lines, "$fix->{label} in $pkg $version: $fixed";
+                if ($fixed eq 'NO') {
+                    push @problems, "$pkg $version lacks $fix->{short}";
+                    $missing_ini{ $fix->{ini} } = 1 if $fix->{ini};
+                }
+            }
+        }
+    }
+    # while a fix is missing, the setting that limits it, as the php command sees it
+    if (%missing_ini && (my $php = (grep { -x } qw(/usr/bin/php /usr/local/bin/php))[0])) {
+        for my $ini (sort keys %missing_ini) {
+            my $on = cmd_out($php, '-r', "echo ini_get('$ini') ? 'On' : 'Off';");
+            push @lines, "$ini: $on (php command)" if defined $on && $on =~ /^O(?:n|ff)$/;
         }
     }
     return ({ title => 'Server health (now)', alert => 0, lines => [ (map { "!! $_" } @problems), @lines ] }, @problems);
 }
 
-# PHP's own releases with the PHP2Shell fix (GHSA-w8hw-w9fx-j79w, GHSA-6wmf-4rv5-p3rp) are 8.2.35,
-# 8.3.36, 8.4.27 and 8.5.12; later branches have it from the start. Distributions that follow those
-# releases, such as RHEL 10 and Rocky 10, only say "rebase to 8.3.36" in their changelogs. Older
-# branches (7.4, 8.0, 8.1) get the fix only as a distribution backport, which the changelog shows.
+# 'yes', 'yes (8.3.37 is a PHP release with the fix)' or 'NO' for one of @php_fixes, given a package's
+# changelog lines and the PHP version it carries
+sub fix_state {
+    my ($fix, $version, $log) = @_;
+    my $cves = join '|', map { quotemeta } @{ $fix->{cves} };
+    return 'yes' if grep { /\b(?:$cves)\b/ } @$log;
+    return "yes ($version is a PHP release with the fix)" if php_release_fixed($version, $fix);
+    return 'NO';
+}
+
+# Whether a PHP version is one of PHP's own releases with the fix: at or after the first fixed release
+# of its branch, or a branch newer than any listed
 sub php_release_fixed {
-    my ($maj, $min, $patch) = ($_[0] // '') =~ /^(\d+)\.(\d+)\.(\d+)/ or return 0;
-    my %first = ('8.2' => 35, '8.3' => 36, '8.4' => 27, '8.5' => 12);
-    return $patch >= $first{"$maj.$min"} if exists $first{"$maj.$min"};
-    return $maj > 8 || ($maj == 8 && $min > 5);
+    my ($version, $fix) = @_;
+    my ($maj, $min, $patch) = ($version // '') =~ /^(\d+)\.(\d+)\.(\d+)/ or return 0;
+    my $first = $fix->{first};
+    return $patch >= $first->{"$maj.$min"} if exists $first->{"$maj.$min"};
+    my ($newest) = sort { $b->[0] <=> $a->[0] || $b->[1] <=> $a->[1] } map { [ split /\./ ] } keys %$first;
+    return $maj > $newest->[0] || ($maj == $newest->[0] && $min > $newest->[1]);
 }
 
 # What CISA's rule for PHP2Shell finds in a log line, as a short reason, or undef: a reported address,
