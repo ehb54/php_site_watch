@@ -63,8 +63,15 @@ sleep 2
 echo "PHP module serving requests: $(served)"
 echo "GET /oom.php -> $(get /oom.php)"
 echo "POST /index.php -> $(get /index.php a=1)"
+crashed=" $(pgrep -d ' ' -u www-data -x apache2) "
 pkill -SEGV -u www-data -x apache2    # crash every worker
-sleep 2
+# the account is found from the running workers: wait until Apache has started a new one, as the
+# crashed ones can linger for a moment
+for i in $(seq 60); do
+    sleep 0.5
+    for p in $(pgrep -u www-data -x apache2); do [[ $crashed == *" $p "* ]] || break 2; done
+done
+sleep 0.5
 
 echo; echo "######## report on the old build (account detected, default log locations)"
 psw > /tmp/r1.txt; rc=$?

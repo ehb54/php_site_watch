@@ -33,8 +33,9 @@ It reports:
   listening backdoor or an outbound connection
 - server health: uptime and load, whether the web server and php-fpm services are running,
   local disks over 90% full, the PHP version and whether its packages include the PHP2Shell fix
-  (RPM, Debian and Ubuntu), whether php-fpm, or Apache with mod_php, is still running PHP that an
-  update replaced, and zombie processes of the PHP account
+  and the fixes of PHP's 2026-11-19 security releases (RPM, Debian and Ubuntu), whether php-fpm,
+  or Apache with mod_php, is still running PHP that an update replaced, and zombie processes of
+  the PHP account
 
 On a host, processes in containers (Docker, Podman, Kubernetes, LXC) are left out: they can run
 under the same user ID as the host's PHP but belong to their own setups. The health section notes
@@ -225,10 +226,10 @@ yourself with `scan` lines.
   or `/dev/shm`; processes or listening sockets of the PHP account you don't recognize; and
   connections from it to unfamiliar addresses.
 - **Health lines marked `!!`:** a web server or php-fpm service that is enabled but not running,
-  a disk over 90% full, a PHP package without the PHP2Shell fix, a php-fpm that needs a restart
-  to pick up an update, an Apache with mod_php that needs a stop and start for it, a lockdown
-  that is on (or on with its rules gone), and a key for the `fleet` user that isn't limited to
-  `fleet-agent`.
+  a disk over 90% full, a PHP package without the PHP2Shell fix or the 2026-11-19 fixes, a
+  php-fpm that needs a restart to pick up an update, an Apache with mod_php that needs a stop and
+  start for it, a lockdown that is on (or on with its rules gone), and a key for the `fleet` user
+  that isn't limited to `fleet-agent`.
 
 ## PHP2Shell signs, from CISA's rule
 
@@ -250,10 +251,22 @@ waiting for a new version, one per line: `ioc = 192.0.2.10`, `ioc = evil.example
 hash. The health section says how many indicators are in use. A shell or download that starts and
 finishes between two runs is not seen; the log and file checks don't have that gap.
 
-## The PHP2Shell fix check
+## The PHP fix checks
 
-Distributions backport the fix without changing PHP's own version (7.4.33 stays 7.4.33), so the
-health section looks for `CVE-2026-109618` in the changelog of the installed packages instead:
+The health section checks two sets of PHP fixes, one line each:
+
+- **PHP2Shell** (CVE-2026-109618, CVE-2026-109619, 2026-10-21): PHP's releases with the fix are
+  8.2.35, 8.3.36, 8.4.27 and 8.5.12.
+- **PHP's 2026-11-19 security releases**, the four critical advisories that reach the 8.2 branch
+  (CVE-2026-129289 PHP-FPM request smuggling, CVE-2026-129496 timezone cache use-after-free,
+  CVE-2026-126714 partially overwritten session files, CVE-2026-115560 session serializer
+  mismatch): PHP's releases with the fixes are 8.2.36, 8.3.37, 8.4.28 and 8.5.13. While they are
+  missing, the health section also shows `session.upload_progress.enabled` as the `php` command
+  sees it: upload progress is the remote route to both session flaws, so turning it off is the
+  stopgap until the fixed packages arrive.
+
+Distributions backport fixes without changing PHP's own version (7.4.33 stays 7.4.33), so the
+health section looks for the CVEs in the changelog of the installed packages instead:
 
 - RPM systems (RHEL, Rocky, AlmaLinux, Oracle Linux): `rpm -q --changelog` of the package that
   provides the running php-fpm, or the `php` command.
@@ -266,7 +279,7 @@ health section looks for `CVE-2026-109618` in the changelog of the installed pac
   version installed. The packages of a version (`phpX.Y-cli`, `libapache2-mod-phpX.Y`,
   `phpX.Y-fpm` and so on) are built together, so this covers mod_php as well.
 
-The line ends in `yes`, `NO` (also listed with `!!` at the top), or, on Debian and Ubuntu,
+Each line ends in `yes`, `NO` (also listed with `!!` at the top), or, on Debian and Ubuntu,
 `unknown (no changelog)`. Docker's Ubuntu images keep these changelogs, but minimized systems that
 leave all of `/usr/share/doc` out, such as Debian's slim images, don't. There, compare the version
 on that line with the builds below. To keep the changelog from the next PHP update on, put this
@@ -287,6 +300,9 @@ Builds with the fix:
 | RHEL 8, Rocky, AlmaLinux, Oracle Linux 8 | php 7.4 module | `7.4.33-8` |
 | Rocky 9 | php 8.0 | `8.0.30-8.el9_8.1` |
 | RHEL 10, Rocky 10 | php 8.3 | `8.3.36-1` (PHP 8.3.36) |
+
+Builds with the 2026-11-19 fixes: none from the distributions yet (2026-11-19); PHP's own releases
+8.2.36, 8.3.37, 8.4.28 and 8.5.13 have them.
 
 The check reads the installed packages, but a running PHP keeps the code it started with. The
 health section flags a php-fpm that still runs a binary an update replaced, and an Apache that
@@ -516,7 +532,7 @@ podman run --rm -q -v "$PWD/test:/t:ro,z" -v "$PWD:/s:ro,z" \
 # setup.sh: install, cron jobs, recipients, moving addresses off old cron jobs, logrotate,
 # uninstall (also with Ubuntu and Debian images, e.g. docker.io/library/ubuntu:22.04)
 podman run --rm -q -v "$PWD:/s:ro,z" quay.io/rockylinux/rockylinux:9 bash /s/test/test-setup.sh
-# Ubuntu: the PHP2Shell fix check through dpkg with fixture packages, missing ps and ss, the disk
+# Ubuntu: the PHP fix checks through dpkg with fixture packages, missing ps and ss, the disk
 # line in a container, examples/genapp.conf (:20.04, :22.04 or :24.04, or debian:12-slim; run it
 # a second time with --cap-add SYS_PTRACE for the other half of the sockets checks)
 podman run --rm -q -v "$PWD:/s:ro,z" docker.io/library/ubuntu:22.04 bash /s/test/test-ubuntu.sh
@@ -557,6 +573,10 @@ bash test/test-vm.sh rocky9   # or rocky8, rocky10, ubuntu24.04
 
 ## Versions
 
+- **1.12.0:** the health section also checks for the fixes of PHP's 2026-11-19 security releases
+  (CVE-2026-129289, CVE-2026-129496, CVE-2026-126714, CVE-2026-115560), by changelog or by PHP's
+  release (8.2.36, 8.3.37, 8.4.28, 8.5.13), and while they are missing shows
+  `session.upload_progress.enabled`, the setting the stopgap turns off
 - **1.11.0:** `fleet.pl`, for the servers' inventory: `fleet add` sets a server up from it (php-site-watch,
   the profile's config, report recipients, control host keys, lockdown-allow addresses, the sites to
   check from outside), `sync` brings servers back in line with it, and `remove`, `list` and `check`

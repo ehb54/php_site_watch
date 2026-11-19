@@ -49,6 +49,10 @@ fx=/s/test/dpkg
 fixed74=$(mkdeb fixed74 php7.4-common 7.4.3-4ubuntu2.29+esm5 $fx/php7.4-fixed.changelog)
 old74=$(mkdeb old74 php7.4-common 7.4.3-4ubuntu2.7 $fx/php7.4-unfixed.changelog)
 nolog74=$(mkdeb nolog74 php7.4-common 7.4.3-4ubuntu2.29+esm5)
+nov74=$(mkdeb nov74 php7.4-common 7.4.3-4ubuntu2.29+esm6 $fx/php7.4-nov2026.changelog)
+# packages that follow PHP's own releases, without a changelog, as on minimized systems
+sury83old=$(mkdeb sury83old php8.3-common 8.3.36-1+ubuntu24.04.1+deb.sury.org+1)
+sury83=$(mkdeb sury83 php8.3-common 8.3.37-1+ubuntu24.04.1+deb.sury.org+1)
 fixed81=$(mkdeb fixed81 php8.1-common 8.1.2-1ubuntu2.28 $fx/php8.1-fixed.changelog /etc/php/8.1/fixture.ini)
 generic=$(mkdeb generic php-common 2:75 $fx/php7.4-unfixed.changelog)
 # keep the fixtures' changelogs whatever this image leaves out of /usr/share/doc
@@ -57,7 +61,11 @@ echo 'path-include=/usr/share/doc/php*/changelog.Debian.gz' > /etc/dpkg/dpkg.cfg
 check 'no PHP packages: no fix line' '! health | grep -q "PHP2Shell fix"'
 dpkg -i "$fixed74" > /dev/null 2>&1
 health > /tmp/h1.txt; cat /tmp/h1.txt
-check 'fixed build: yes' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php7.4-common 7.4.3-4ubuntu2.29+esm5: yes" /tmp/h1.txt && ! grep -q "^!! php7.4" /tmp/h1.txt'
+nov='2026-11-19 PHP fixes (CVE-2026-129289/129496/126714/115560)'
+check 'build with only the PHP2Shell fix: yes, the 2026-11-19 fixes NO' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php7.4-common 7.4.3-4ubuntu2.29+esm5: yes" /tmp/h1.txt && grep -qxF "$nov in php7.4-common 7.4.3-4ubuntu2.29+esm5: NO" /tmp/h1.txt && grep -qxF "!! php7.4-common 7.4.3-4ubuntu2.29+esm5 lacks the 2026-11-19 PHP fixes" /tmp/h1.txt && ! grep -q "^!! php7.4.* lacks the PHP2Shell fix" /tmp/h1.txt'
+dpkg -i "$nov74" > /dev/null 2>&1
+health > /tmp/h1b.txt; cat /tmp/h1b.txt
+check 'build with both fixes: yes twice, nothing flagged' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php7.4-common 7.4.3-4ubuntu2.29+esm6: yes" /tmp/h1b.txt && grep -qxF "$nov in php7.4-common 7.4.3-4ubuntu2.29+esm6: yes" /tmp/h1b.txt && ! grep -q "^!! php7.4" /tmp/h1b.txt'
 
 dpkg -i "$old74" > /dev/null 2>&1
 health > /tmp/h2.txt; cat /tmp/h2.txt
@@ -74,7 +82,14 @@ check 'removed package with config files left: not reported' '[[ $(dpkg-query -W
 
 dpkg -i "$nolog74" > /dev/null 2>&1
 health > /tmp/h4.txt; cat /tmp/h4.txt
-check 'changelog missing: unknown, not flagged' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php7.4-common 7.4.3-4ubuntu2.29+esm5: unknown (no changelog)" /tmp/h4.txt && ! grep -q "^!! php7.4" /tmp/h4.txt'
+check 'changelog missing: unknown, not flagged' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php7.4-common 7.4.3-4ubuntu2.29+esm5: unknown (no changelog)" /tmp/h4.txt && grep -qxF "$nov in php7.4-common 7.4.3-4ubuntu2.29+esm5: unknown (no changelog)" /tmp/h4.txt && ! grep -q "^!! php7.4" /tmp/h4.txt'
+dpkg -i "$sury83old" > /dev/null 2>&1
+health > /tmp/h5.txt; cat /tmp/h5.txt
+check 'PHP release 8.3.36, no changelog: PHP2Shell fixed by version, 2026-11-19 unknown' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php8.3-common 8.3.36-1+ubuntu24.04.1+deb.sury.org+1: yes (8.3.36 is a PHP release with the fix)" /tmp/h5.txt && grep -qxF "$nov in php8.3-common 8.3.36-1+ubuntu24.04.1+deb.sury.org+1: unknown (no changelog)" /tmp/h5.txt'
+dpkg -i "$sury83" > /dev/null 2>&1
+health > /tmp/h6.txt; cat /tmp/h6.txt
+check 'PHP release 8.3.37: both fixed by version' 'grep -qxF "PHP2Shell fix (CVE-2026-109618/109619) in php8.3-common 8.3.37-1+ubuntu24.04.1+deb.sury.org+1: yes (8.3.37 is a PHP release with the fix)" /tmp/h6.txt && grep -qxF "$nov in php8.3-common 8.3.37-1+ubuntu24.04.1+deb.sury.org+1: yes (8.3.37 is a PHP release with the fix)" /tmp/h6.txt && ! grep -q "^!! php8.3" /tmp/h6.txt'
+dpkg -r php8.3-common > /dev/null 2>&1
 rm /etc/dpkg/dpkg.cfg.d/zz-php-site-watch-test
 
 echo; echo "######## 3: examples/genapp.conf, with ps and ss installed"

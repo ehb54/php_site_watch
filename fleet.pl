@@ -42,7 +42,7 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.11.0';
+our $VERSION = '1.12.0';
 
 my $repo_default = 'https://github.com/ehb54/php_site_watch';
 my @profiles     = qw(lims vhost genapp);
