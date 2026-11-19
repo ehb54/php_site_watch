@@ -43,6 +43,8 @@ fi
 dnf -y -q install httpd "php-fpm-$old" "php-common-$old" "php-cli-$old" perl-interpreter procps-ng iproute findutils gzip postfix > /dev/null 2>&1 || exit 9
 rpm -q php-fpm httpd perl-interpreter postfix
 
+# Rocky 10's postfix leaves its spool directories to systemd-tmpfiles at boot, which a container skips
+[[ -e /usr/lib/tmpfiles.d/postfix.conf ]] && systemd-tmpfiles --create /usr/lib/tmpfiles.d/postfix.conf
 postconf -e "myhostname = el${el}test.example.org" 'inet_interfaces = loopback-only' 'maillog_file = /var/log/maillog'
 newaliases && postfix start 2> /dev/null
 
