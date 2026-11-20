@@ -24,6 +24,9 @@
 #                        like ^/srv/app/cache/, also skips that directory during the scan
 #   --allow-proc REGEX   other expected processes of the PHP account (repeatable)
 #   --allow-peer REGEX   expected network peers as host:port, e.g. a remote database (repeatable)
+#   --allow-net-proc REGEX  processes whose network sockets are expected, by command line, e.g. an
+#                        MPI job talking among its ranks (repeatable); a socket is left out only
+#                        when every process holding it matches
 #   --ioc TEXT           an indicator of compromise to look for, besides those from CISA's rule for
 #                        PHP2Shell: an address, a domain, a file's MD5, SHA-1 or SHA-256 hash, or any
 #                        other text seen in attack traffic (repeatable)
@@ -47,14 +50,14 @@
 use strict;
 use warnings;
 
-our $VERSION = '1.12.0';
+our $VERSION = '1.13.0';
 
 # Cron and sudo can hand us a short PATH; ps date formats depend on the locale.
 $ENV{PATH}   = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 $ENV{LC_ALL} = 'C';
 
 my %single = map { $_ => 1 } qw(date hours user config mail-from sendmail state-dir log-file);
-my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer mail-to ioc);
+my %multi  = map { $_ => 1 } qw(fpm-logs web-logs scan exclude allow-proc allow-peer allow-net-proc mail-to ioc);
 my %flag   = map { $_ => 1 } qw(quiet alert status last);
 
 my @mon = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
@@ -235,6 +238,7 @@ my @exclude    = (@default_exclude,    map { qr/$_/ } @{ $list{exclude} });
 my @skip       = map { m{^\^((?:/(?:[\w-]|\\\.)+)+)/$} ? do { (my $d = $1) =~ s/\\\././g; $d } : () } @{ $list{exclude} };
 my @allow_proc = (@default_allow_proc, map { qr/$_/ } @{ $list{'allow-proc'} });
 my @allow_peer = map { qr/$_/ } @{ $list{'allow-peer'} };
+my @allow_net_proc = map { qr/$_/ } @{ $list{'allow-net-proc'} };
 my @iocs       = (@cisa_iocs, @{ $list{ioc} });
 my %ioc_hash   = map { lc($_) => 1 } grep { /^(?:[0-9a-f]{32}|[0-9a-f]{40}|[0-9a-f]{64})$/i } @iocs;
 my %ioc_addr   = map { lc($_) => 1 } grep { /^\d{1,3}(?:\.\d{1,3}){3}$|^[0-9a-f]*:[0-9a-f:]+$/i } @iocs;
@@ -360,6 +364,11 @@ if (my $fh = quiet_open('ss', '-tanp')) {
         next unless @c >= 6;
         $owned++;
         next unless grep { $userpid{$_} } $who =~ /pid=(\d+)/g;
+        # sockets held only by processes expected to talk on the network, like an MPI job's ranks
+        if (@allow_net_proc) {
+            my @pids = $who =~ /pid=(\d+)/g;
+            next unless grep { my $c = $args{$_}; !defined $c || !grep { $c =~ $_ } @allow_net_proc } @pids;
+        }
         next if $lport =~ /^(?:80|443)$/;    # visitors talking to the web server
         if ($state eq 'LISTEN') {
             next if $lhost =~ $re_loop;
