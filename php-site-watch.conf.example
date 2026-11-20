@@ -1,6 +1,7 @@
 # /etc/php-site-watch.conf: settings for php-site-watch on this server.
 # One "key = value" per line; # starts a comment. Command-line options override these.
-# fpm-logs, web-logs, scan, exclude, allow-proc and allow-peer may be given more than once.
+# fpm-logs, web-logs, scan, exclude, allow-proc, allow-peer, allow-net-proc and ioc may be given
+# more than once.
 
 # Account PHP runs as. If unset, it is detected from the running php-fpm or Apache workers.
 # user = apache
@@ -28,6 +29,11 @@
 
 # Expected connections to other machines, as host:port (for example a database server).
 # allow-peer = ^10\.0\.0\.5:3306$
+
+# Processes whose network sockets are expected, by command line, such as an MPI job whose ranks talk
+# over the host's own addresses on ports that change with every job. A socket is left out only when
+# every process holding it matches.
+# allow-net-proc = ^/usr/bin/mpirun -np \d+ /opt/model/bin/run$
 
 # Indicators of compromise to look for besides those from CISA's rule for PHP2Shell, which are
 # built in: an address, a domain, a file's MD5, SHA-1 or SHA-256 hash, or any text seen in attack

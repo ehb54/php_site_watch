@@ -184,6 +184,7 @@ Options (all but `--quiet`, `--alert`, `--status`, `--last` and `--version` can 
 | `--exclude REGEX` | changed files to ignore (repeatable); one naming a whole directory, like `^/srv/app/cache/`, also skips that directory during the scan |
 | `--allow-proc REGEX` | other expected processes of the PHP account (repeatable) |
 | `--allow-peer REGEX` | expected connections to other machines, as host:port (repeatable) |
+| `--allow-net-proc REGEX` | processes whose network sockets are expected, by command line, such as an MPI job talking among its ranks (repeatable); a socket is left out only when every process holding it matches |
 | `--ioc TEXT` | an indicator of compromise to look for besides CISA's: an address, domain, file hash (MD5, SHA-1 or SHA-256) or any text seen in attack traffic (repeatable) |
 | `--config FILE` | config file (default: `/etc/php-site-watch.conf` if it exists) |
 | `--quiet` | print only sections with findings |
@@ -573,6 +574,11 @@ bash test/test-vm.sh rocky9   # or rocky8, rocky10, ubuntu24.04
 
 ## Versions
 
+- **1.13.0:** `allow-net-proc` leaves out the sockets of processes expected to talk on the network;
+  `examples/us3lims.conf` allows the LIMS host's own Slurm and MPI analysis jobs (batch script, srun,
+  MPICH's proxy, mpirun, `us_mpi_analysis`) and their sockets, the job status checks in all their
+  forms (with or without a user name, the local `lims/bin/status/slurm`, through `timeout`, `squeue`),
+  and the `scp` of a job's input to a cluster
 - **1.12.0:** the health section also checks for the fixes of PHP's 2026-11-19 security releases
   (CVE-2026-129289, CVE-2026-129496, CVE-2026-126714, CVE-2026-115560), by changelog or by PHP's
   release (8.2.36, 8.3.37, 8.4.28, 8.5.13), and while they are missing shows

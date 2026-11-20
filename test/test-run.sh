@@ -55,6 +55,8 @@ runas perl -e '$0 = "php-fpm: pool www"; system "sh", "-c", "sleep 600; true"' &
 runas sleep 600 &
 ncat -lk 0.0.0.0 8099 > /dev/null &
 runas ncat -lk 0.0.0.0 4444 > /dev/null &
+# an expected job whose ranks listen on the network: test.conf allows the process and its sockets
+runas bash -c 'exec -a mpi-job ncat -lk 0.0.0.0 4445' > /dev/null &
 sleep 1
 runas bash -c "exec 3<>/dev/tcp/$ip/8099; sleep 600" &
 runas bash -c 'exec 3<>/dev/tcp/127.0.0.1/8099; sleep 600' &
@@ -75,6 +77,7 @@ check 'planted processes found, PHP worker allowed' 'grep -q "ncat -lk 0.0.0.0 4
 check 'PHP notices and warnings are not FastCGI failures' '! grep -qE "Content-type not specified|Undefined variable" /tmp/r1.txt'
 check 'application fatal errors grouped for context' 'grep -qE "^ +2  Uncaught Error: Undefined constant \"d\" in /srv/www/htdocs/somo/pubs.php:79$" /tmp/r1.txt'
 check 'listener and outbound connection found, loopback left out' 'grep -q "LISTEN  0.0.0.0:4444" /tmp/r1.txt && grep -q -- "-> $ip:8099" /tmp/r1.txt && ! grep -q -- "-> 127.0.0.1:8099" /tmp/r1.txt'
+check 'sockets held only by allow-net-proc processes left out' '! grep -qE "mpi-job|0\.0\.0\.0:4445" /tmp/r1.txt'
 check 'health section present' 'grep -q "== Server health (now)" /tmp/r1.txt'
 signs=$(sed -n '/^== Signs of PHP2Shell/,/^$/p' /tmp/r1.txt)
 check 'PHP2Shell: a reported address and scanner in the access log' 'grep -q "^reported indicator 103.216.220.92: 103.216.220.92 .*php2shell-scan/109618\"\$" <<< "$signs"'
@@ -95,6 +98,7 @@ perl /s/php-site-watch.pl --quiet "${logs[@]}" > /tmp/r2.txt; rc=$?
 check 'account detected from the php-fpm worker' 'grep -q "PHP account websvc" /tmp/r2.txt && ((rc == 1))'
 check 'quiet output leaves out context and health' '! grep -qE "== (5xx|Most active|Server health)" /tmp/r2.txt'
 check 'without the config, Trac and backup files show up' 'grep -q trac.log /tmp/r2.txt && grep -q " /home/websvc/\.uslims_backup_stats\$" /tmp/r2.txt && ! grep -q /srv/users/websvc /tmp/r2.txt'
+check 'without the config, the job and its socket show up' 'grep -q "mpi-job -lk 0.0.0.0 4445" /tmp/r2.txt && grep -q "LISTEN  0.0.0.0:4445" /tmp/r2.txt'
 
 echo; echo "######## 3: mail through a stand-in sendmail"
 mkdir /tmp/mail
