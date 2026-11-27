@@ -270,7 +270,7 @@ EOF
         || echo "setup: warning: /etc/sudoers does not include /etc/sudoers.d, so $sudoers has no effect" >&2
 
     echo "control host $name may connect as $fleet@$(uname -n) from $from"
-    echo "it can run: ping, report, packages, lockdown status, lockdown on [--mysql] [REASON]"
+    echo "it can run: ping, report, packages, exposure, lockdown status, lockdown on [--mysql] [REASON]"
     # sshd may only let listed users in
     local limits
     limits=$(sshd -T 2> /dev/null | grep -iE '^(allowusers|allowgroups) ' || true)

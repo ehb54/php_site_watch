@@ -45,9 +45,9 @@ how many containers are running. To watch PHP in a container, run php-site-watch
 Two companions come with it, for when something is found:
 [`site-lockdown`](#emergency-lockdown), an emergency switch that blocks the web ports (and MySQL on
 request) from everywhere but your own addresses, and [`fleet-agent`](#fleet-control-hosts), the one
-command a fleet control host may run on the server: it reads reports and can turn the lockdown on,
-never off. For many servers, [`fleet.pl`](#fleet-inventory) keeps them in one inventory and sets
-each one up from it, run by a person from their own machine.
+command a fleet control host may run on the server: it reads reports, package lists and what
+listens, and can turn the lockdown on, never off. For many servers, [`fleet.pl`](#fleet-inventory)
+keeps them in one inventory and sets each one up from it, run by a person from their own machine.
 
 ## Requirements
 
@@ -404,19 +404,20 @@ sudo /usr/local/sbin/site-lockdown off
 ## Fleet control hosts
 
 A control host is a machine that looks after many servers over SSH. On each server it gets a key
-that can only run `fleet-agent`, which accepts five requests:
+that can only run `fleet-agent`, which accepts six requests:
 
 | Request | What it does |
 |---|---|
 | `ping` | the server's name and versions |
 | `report` | the latest saved reports and runs (`php-site-watch --last`) |
 | `packages` | installed packages, and the security updates the package manager already knows about (nothing is downloaded) |
+| `exposure` | the running kernel and whether a reboot is needed, the processes still running files an update replaced, and the listening sockets with their programs, packages and systemd units |
 | `lockdown status` | `site-lockdown status` |
 | `lockdown on [--mysql] [REASON]` | turns the lockdown on, recorded as done by that control host |
 
 Turning the lockdown off, installing software and changing settings can't be done through it, so a
-stolen control host key can read reports and lock sites, and nothing else. Every request, refused
-or not, goes to syslog (authpriv).
+stolen control host key can read reports, package lists and what listens, and lock sites, and
+nothing else. Every request, refused or not, goes to syslog (authpriv).
 
 ```bash
 sudo ./setup.sh controller add ctl1 --from 203.0.113.10 --key 'ssh-ed25519 AAAA...'
@@ -432,6 +433,7 @@ the line to add. Then, from the control host:
 
 ```bash
 ssh fleet@server report
+ssh fleet@server exposure    # running kernel, reboot needed, replaced files in use, listening sockets
 ssh fleet@server lockdown on --mysql CVE-2026-12345 exploited, no fix yet
 ```
 
@@ -574,6 +576,10 @@ bash test/test-vm.sh rocky9   # or rocky8, rocky10, ubuntu24.04
 
 ## Versions
 
+- **1.14.0:** `fleet-agent exposure`, for control hosts that match advisories against the package
+  list: the running and default boot kernel, whether a reboot is needed (`dnf needs-restarting -r`,
+  `/var/run/reboot-required`), the processes still running files an update replaced, grouped by
+  systemd unit, and each listening socket with its process, program, package and unit
 - **1.13.0:** `allow-net-proc` leaves out the sockets of processes expected to talk on the network;
   `examples/us3lims.conf` allows the LIMS host's own Slurm and MPI analysis jobs (batch script, srun,
   MPICH's proxy, mpirun, `us_mpi_analysis`) and their sockets, the job status checks in all their
