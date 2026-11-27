@@ -32,7 +32,7 @@ for c in "$c1" "$c2"; do
 done
 for c in "$srv" "$c1" "$c2"; do
     on "$c" 'if command -v dnf > /dev/null; then
-                 dnf -y -q install perl-interpreter nftables openssh-server openssh-clients sudo procps-ng iproute findutils util-linux
+                 dnf -y -q install perl-interpreter nftables openssh-server openssh-clients sudo procps-ng iproute findutils util-linux dnf-plugins-core
              else
                  apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq -y install perl nftables openssh-server openssh-client sudo procps iproute2
              fi > /dev/null 2>&1' &
@@ -122,10 +122,40 @@ out=$(fleet "$c1" report)
 check 'report: php-site-watch --last' 'grep -q "^== Recent runs" <<< "$out"'
 out=$(fleet "$c1" packages)
 check 'packages: installed and security updates' 'grep -qx "== installed packages" <<< "$out" && grep -qE "^(ii +)?perl" <<< "$out" && grep -q "^== security updates waiting" <<< "$out"'
+
+# exposure: a program deleted while it runs, as an update replaces files, and a listener run by
+# another user, whose sockets container root can't see without CAP_SYS_PTRACE (like nfsd's, which
+# no process holds)
+# (a copy of perl, since coreutils-single's sleep is a link to one program for all of them)
+on "$srv" 'cp /usr/bin/perl /usr/local/bin/psw-replaced
+           setsid /usr/local/bin/psw-replaced -e "sleep 1800" < /dev/null > /dev/null 2>&1 &
+           su -s /bin/sh nobody -c "setsid perl -MIO::Socket::INET -e '"'"'\$s = IO::Socket::INET->new(LocalPort => 9090, Listen => 9) or die; sleep 1800'"'"' < /dev/null > /dev/null 2>&1 &"
+           sleep 1; rm /usr/local/bin/psw-replaced'
+out=$(fleet "$c1" exposure)
+echo "$out"
+check 'exposure: os, boot time and the running kernel' 'grep -qxF "os: $PRETTY_NAME" <<< "$out" && grep -qxF "os id: $ID $VERSION_ID" <<< "$out" && grep -qE "^booted: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC$" <<< "$out" && grep -qxF "kernel running: $(on "$srv" "uname -r")" <<< "$out"'
+check 'exposure: no grubby or kernel here, said so' 'grep -qx "kernel default boot: unknown" <<< "$out" && grep -qx "kernels in /boot: none" <<< "$out"'
+if on "$srv" 'command -v dnf' > /dev/null; then
+    check 'exposure: dnf needs-restarting answers yes or no' 'grep -qE "^reboot needed: (yes|no)$" <<< "$out" && ! grep -q "note: dnf needs-restarting" <<< "$out"'
+else
+    check 'exposure: nothing here tracks reboots, so unknown' 'grep -qx "reboot needed: unknown" <<< "$out"'
+fi
+check 'exposure: a process still running a deleted program' 'grep -qE "^[^ ]+: psw-replaced \([0-9]+\): /usr/local/bin/psw-replaced$" <<< "$out"'
+check 'exposure: listening, with program and package' 'grep -qE "^tcp [^ ]+:22 sshd /usr/sbin/sshd openssh-server [^ ]+$" <<< "$out" && grep -qE "^tcp 0\.0\.0\.0:3306 perl /usr/bin/perl[^ ]* perl[^ ]* [^ ]+$" <<< "$out"'
+if grep -qx "tcp 0.0.0.0:9090 - - - -" <<< "$out"; then
+    check 'exposure: a socket without a visible process, and the note' 'grep -q "^(- as the process: no process holds it" <<< "$out"'
+else
+    echo "(root sees every process here; the case of a socket without one is not covered)"
+fi
+on "$srv" 'printf "libc6\nlibssl3\nlibc6\n" > /var/run/reboot-required.pkgs; touch /var/run/reboot-required'
+out=$(fleet "$c1" exposure)
+check 'exposure: /var/run/reboot-required means yes, with its packages' 'grep -qx "reboot needed: yes" <<< "$out" && grep -qx "  why: /var/run/reboot-required exists (libc6, libssl3)" <<< "$out"'
+on "$srv" 'rm -f /var/run/reboot-required /var/run/reboot-required.pkgs; pkill -x psw-replaced; pkill -u nobody -x perl'
+
 out=$(fleet "$c1" lockdown status)
 check 'lockdown status through SSH while the block is on' 'grep -qx "lockdown: on" <<< "$out"'
 for bad in 'lockdown off' 'bash' 'report; id' 'report --help' 'sh -c id' 'lockdown on $(id)' 'lockdown on x;id' \
-           '../../bin/sh' 'packages extra' ''; do
+           '../../bin/sh' 'packages extra' 'exposure --all' ''; do
     out=$(fleet "$c1" "'$bad'")
     check "refused: '$bad'" 'grep -qE "^fleet-agent: (not allowed|the reason may only)" <<< "$out" && ! grep -qE "uid=|lockdown: off" <<< "$out"'
 done
